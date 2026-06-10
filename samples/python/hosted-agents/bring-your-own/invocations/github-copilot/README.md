@@ -190,7 +190,7 @@ azd ai agent monitor
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
 <details>
-<summary><h3>Deploying with the Foundry Toolkit VS Code Extension</h3></summary>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
 1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
