@@ -75,16 +75,16 @@ The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/
    ```
 4. Set up a Python virtual environment:
 
-   **macOS/Linux:**
-   ```bash
-   python -m venv .venv
-   source .venv/bin/activate
-   ```
-
    **Windows (PowerShell):**
    ```powershell
    python -m venv .venv
    .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
    ```
 
 5. Install dependencies:
