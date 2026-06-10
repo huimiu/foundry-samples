@@ -64,7 +64,7 @@ azd ai agent run
 The agent starts on `http://localhost:8088/`.
 
 <details>
-<summary>Using the Foundry Toolkit VS Code Extension</summary>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
 The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
 
@@ -172,7 +172,7 @@ azd ai agent monitor
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
 <details>
-<summary>Deploying with the Foundry Toolkit VS Code Extension</summary>
+<summary><h3>Deploying with the Foundry Toolkit VS Code Extension</h3></summary>
 
 1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
