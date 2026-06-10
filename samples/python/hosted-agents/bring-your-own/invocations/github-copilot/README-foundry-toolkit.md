@@ -98,7 +98,7 @@ The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/
 5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
 
 <details>
-<summary><h3>Without `azd`</h3></summary>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
 pip install -r requirements.txt
