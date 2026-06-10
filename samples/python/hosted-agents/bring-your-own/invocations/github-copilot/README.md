@@ -159,6 +159,8 @@ Authentication uses Managed Identity via `DefaultAzureCredential`. When deployed
 
 ## Deploying the Agent to Microsoft Foundry
 
+### Using azd
+
 Once you've tested locally, deploy to Microsoft Foundry:
 
 ```bash
