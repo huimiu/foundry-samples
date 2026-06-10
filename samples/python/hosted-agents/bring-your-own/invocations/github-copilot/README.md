@@ -76,7 +76,8 @@ Chat with a running agent using the **Agent Inspector**:
 
 </details>
 
-### Without `azd`
+<details>
+<summary><h3>Without `azd`</h3></summary>
 
 ```bash
 pip install -r requirements.txt
@@ -86,6 +87,8 @@ python main.py
 ```
 
 The agent starts on `http://localhost:8088/`.
+
+</details>
 
 ## Invoke with azd
 
