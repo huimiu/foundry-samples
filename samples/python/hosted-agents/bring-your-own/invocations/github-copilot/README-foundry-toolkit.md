@@ -40,6 +40,32 @@ Create one at [github.com/settings/personal-access-tokens/new](https://github.co
 
 > **Note:** Classic tokens (`ghp_`) are not supported. Use a fine-grained PAT (`github_pat_`), OAuth token (`gho_`), or GitHub App user token (`ghu_`).
 
+<details>
+<summary><h3>Using `azd` (Recommended)</h3></summary>
+
+Create a local `.env` file from the sample template and set `GITHUB_TOKEN`:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env and set GITHUB_TOKEN=github_pat_...
+```
+
+The sample loads `.env` automatically when running locally. If you plan to deploy with `azd`, also add the token to your azd environment so it can be injected into the hosted agent:
+
+```bash
+azd env set GITHUB_TOKEN="github_pat_..."
+```
+
+Next, start the agent locally with the `run` command:
+
+```bash
+azd ai agent run
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
 ### Using the Foundry Toolkit VS Code Extension
 
 The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
@@ -72,31 +98,6 @@ The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/
 5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
 
 <details>
-<summary><h3>Using `azd` (Recommended)</h3></summary>
-
-Create a local `.env` file from the sample template and set `GITHUB_TOKEN`:
-
-```bash
-cp .env.example .env  # skip if .env already exists
-# Edit .env and set GITHUB_TOKEN=github_pat_...
-```
-
-The sample loads `.env` automatically when running locally. If you plan to deploy with `azd`, also add the token to your azd environment so it can be injected into the hosted agent:
-
-```bash
-azd env set GITHUB_TOKEN="github_pat_..."
-```
-
-Next, start the agent locally with the `run` command:
-
-```bash
-azd ai agent run
-```
-
-The agent starts on `http://localhost:8088/`.
-
-</details>
-<details>
 <summary><h3>Without `azd`</h3></summary>
 
 ```bash
@@ -111,16 +112,6 @@ The agent starts on `http://localhost:8088/`.
 </details>
 
 ## Invoke
-
-### Using Foundry Toolkit VS Code Extension
-
-Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
-2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
-3. Type a message and send it. The Agent Inspector automatically handles SSE streaming events and displays the response inline.
-
-> Multi-turn conversation is supported — the Inspector maintains session context across messages.
 
 <details>
 <summary><h3>Using azd</h3></summary>
@@ -165,6 +156,16 @@ data: {"invocation_id": "...", "session_id": "..."}
 
 </details>
 
+### Using Foundry Toolkit VS Code Extension
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector automatically handles SSE streaming events and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
 ## Using Your Own Foundry Model
 
 To use your own Azure AI Foundry model instead of the Copilot model, set the Foundry variables (no `GITHUB_TOKEN` needed):
@@ -178,21 +179,6 @@ python main.py
 Authentication uses Managed Identity via `DefaultAzureCredential`. When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME` in `agent.yaml`.
 
 ## Deploying the Agent to Microsoft Foundry
-
-### Using the Foundry Toolkit VS Code Extension
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
-2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
-3. On the **Basics** tab, configure the core deployment settings:
-   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
-   - For **Code**, pick a packaging option: **Remote** or **Local**.
-   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
-   - **Hosted Agent Name**: confirm the name to register with the hosting service.
-4. On the **Review + Deploy** tab, finalize the runtime and resources:
-   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
-   - Pick a **CPU and Memory** size.
-   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
-5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
 <details>
 <summary><h3>Using azd</h3></summary>
@@ -228,6 +214,21 @@ azd ai agent monitor
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
 </details>
+
+### Using the Foundry Toolkit VS Code Extension
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
+5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
 ## Adding Skills
 
