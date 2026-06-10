@@ -75,7 +75,6 @@ Chat with a running agent using the **Agent Inspector**:
 3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
 
 </details>
-
 <details>
 <summary><h3>Without `azd`</h3></summary>
 
