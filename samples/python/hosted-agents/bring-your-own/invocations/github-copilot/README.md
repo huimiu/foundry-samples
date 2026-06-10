@@ -70,8 +70,31 @@ The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/
 
 1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Sample Gallery**.
 2. Find and select the **GitHub Copilot SDK — Invocations** sample. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, `.vscode/tasks.json`, and `launch.json` automatically.
-3. Edit `.env` and set `GITHUB_TOKEN=github_pat_...`.
-4. Press **F5** (or run the **Start Agent** task) to start the agent locally. The agent starts on `http://localhost:8088/`.
+3. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list):
+   ```
+   GITHUB_TOKEN=github_pat_...
+   ```
+4. Set up a Python virtual environment:
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+5. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+6. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
 
 </details>
 <details>
