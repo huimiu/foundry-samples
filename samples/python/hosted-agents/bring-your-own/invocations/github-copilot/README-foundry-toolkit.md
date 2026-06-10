@@ -41,7 +41,7 @@ Create one at [github.com/settings/personal-access-tokens/new](https://github.co
 > **Note:** Classic tokens (`ghp_`) are not supported. Use a fine-grained PAT (`github_pat_`), OAuth token (`gho_`), or GitHub App user token (`ghu_`).
 
 <details>
-<summary><h3>Using `azd` (Recommended)</h3></summary>
+<summary><h3>Using `azd`</h3></summary>
 
 Create a local `.env` file from the sample template and set `GITHUB_TOKEN`:
 
