@@ -97,7 +97,7 @@ The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/
 
 </details>
 <details>
-<summary><h3>Without `azd`</h3></summary>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
 pip install -r requirements.txt
