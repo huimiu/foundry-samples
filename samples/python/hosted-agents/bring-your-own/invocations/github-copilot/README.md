@@ -90,9 +90,11 @@ The agent starts on `http://localhost:8088/`.
 
 </details>
 
-## Invoke with azd
+## Invoke
 
-### Local
+### Using azd
+
+**Local:**
 
 **Bash:**
 ```bash
@@ -104,7 +106,7 @@ azd ai agent invoke --local '{"input": "What can you help me with?"}'
 azd ai agent invoke --local '{\"input\": \"What can you help me with?\"}'
 ```
 
-### Test with curl
+**Test with curl:**
 
 ```bash
 # First message
@@ -118,7 +120,7 @@ curl -N -X POST http://localhost:8088/invocations \
   -d '{"input": "Give me a code example"}'
 ```
 
-### SSE Event Format
+**SSE Event Format:**
 
 Each Copilot SDK event is streamed via `event.to_dict()`:
 
@@ -129,6 +131,19 @@ data: {"type": "assistant.message_delta", "data": {"delta_content": " a programm
 event: done
 data: {"invocation_id": "...", "session_id": "..."}
 ```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector automatically handles SSE streaming events and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
 
 ## Using Your Own Foundry Model
 
