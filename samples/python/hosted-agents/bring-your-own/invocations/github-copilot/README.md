@@ -68,9 +68,8 @@ The agent starts on `http://localhost:8088/`.
 
 The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Sample Gallery**.
-2. Find and select the **GitHub Copilot SDK — Invocations** sample. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, `.vscode/tasks.json`, and `launch.json` automatically.
-3. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list):
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create new Hosted Agent**. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list):
    ```
    GITHUB_TOKEN=github_pat_...
    ```
