@@ -1,142 +1,111 @@
-<!-- Begin standard disclaimer — do not modify -->
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight. Learn more in the transparency documents for [Agent Service](https://learn.microsoft.com/en-us/azure/ai-foundry/responsible-ai/agents/transparency-note) and [Agent Framework](https://github.com/microsoft/agent-framework/blob/main/TRANSPARENCY_FAQ.md).
+**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-Agents, solutions, or other output you create may be subject to legal and regulatory requirements, may require licenses, or may not be suitable for all industries, scenarios, or use cases. By using any sample, you are acknowledging that any output created using those samples are solely your responsibility, and that you will comply with all applicable laws, regulations, and relevant safety standards, terms of service, and codes of conduct.
+# Toolbox Agent (Invocations Protocol)
 
-Third-party samples contained in this folder are subject to their own designated terms, and they have not been tested or verified by Microsoft or its affiliates.
-
-Microsoft has no responsibility to you or others with respect to any of these samples or any resulting output.
-<!-- End standard disclaimer -->
-
-# What this sample demonstrates
-
-A **Bring Your Own** hosted agent using the **Invocations protocol** with **Azure AI Foundry Toolbox MCP** integration in Python. It shows how to connect to a Foundry toolbox at startup, discover available tools via MCP, and let the model call them during conversation through an agentic tool-calling loop.
-
-This sample combines:
-- The [`azure-ai-agentserver-invocations`](https://pypi.org/project/azure-ai-agentserver-invocations/) SDK for the Invocations protocol
-- The [Foundry SDK (`azure-ai-projects`)](https://pypi.org/project/azure-ai-projects/) for model access via the Responses API
-- Direct MCP (JSON-RPC over HTTP) for toolbox tool discovery and invocation
-
-> **Invocations vs Responses:** Unlike the Responses protocol, the Invocations protocol does **not** provide built-in server-side conversation history. This agent maintains an in-memory session store keyed by `agent_session_id`. In production, replace it with durable storage (Redis, Cosmos DB, etc.) so history survives restarts.
+A Bring Your Own hosted agent using the Microsoft Foundry **Invocations protocol** with Azure AI Foundry Toolbox MCP integration. It discovers toolbox tools over MCP, lets the Foundry model call them in an agentic loop, and streams the final answer as SSE.
 
 ## How It Works
 
-### Toolbox Integration
+1. [main.py](main.py) loads `.env`, reads `FOUNDRY_PROJECT_ENDPOINT`, `AZURE_AI_MODEL_DEPLOYMENT_NAME`, and resolves the toolbox MCP URL from `TOOLBOX_ENDPOINT` or `TOOLBOX_NAME`
+2. `_McpToolboxClient` authenticates with `DefaultAzureCredential`, sends MCP `initialize`, and calls `tools/list`; this happens lazily on the first request so the container can pass health checks before the toolbox is reachable
+3. MCP tool schemas are converted to Responses API function definitions
+4. `InvocationAgentServerHost` exposes `POST /invocations`
+5. The handler accepts a JSON object with `message`, `input`, or `query`, or a plain-text body, and stores conversation history in memory by `agent_session_id`
+6. The agentic loop calls the model, executes requested tools through MCP `tools/call`, feeds results back to the model for up to 10 rounds, and streams a final `token` event followed by a `done` event
 
-At startup, the agent connects to the toolbox MCP endpoint, runs `initialize` + `tools/list`, and converts the discovered tools into function definitions for the Responses API. When the model requests a tool call, the agent executes it via MCP `tools/call` and feeds the result back to the model.
-
-### Model Integration
-
-The agent uses the Foundry SDK Responses API with tool definitions. The agentic loop handles multi-step tool calling — the model can call tools multiple times before producing a final text answer.
-
-### Agent Hosting
-
-The agent is hosted using the [Azure AI AgentServer Invocations SDK](https://pypi.org/project/azure-ai-agentserver-invocations/), which provisions a REST API endpoint compatible with the Azure AI Invocations protocol.
-
-### Agent Deployment
-
-The hosted agent can be developed and deployed to Microsoft Foundry using the [Azure Developer CLI](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd).
-
-## Running the Agent Locally
-
-### Prerequisites
-
-Before running this sample, ensure you have:
-
-1. **Azure Developer CLI (`azd`)** (recommended)
-   - [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later) and the unified Foundry CLI extension bundle: `azd ext install microsoft.foundry` (if you previously installed `azure.ai.agents` or `azure.ai.toolboxes`, run `azd ext uninstall <name>` first).
-   - Authenticated: `azd auth login`
-
-2. **Azure CLI**
-   - Installed and authenticated: `az login`
-
-3. **Python 3.10 or later**
-   - Verify your version: `python --version`
-
-4. **A Foundry Toolbox**
-   - Create a toolbox in your Foundry project (see [Create the toolbox with `azd ai`](#create-the-toolbox-with-azd-ai) below).
-
-### Create the toolbox with `azd ai`
-
-> [!TIP]
-> If you use GitHub Copilot for Azure to scaffold a hosted agent that consumes this toolbox, the following skill references describe the same endpoint contract (env var, headers, MCP protocol, citation patterns, and troubleshooting) that the agent must implement:
->
-> - [Toolbox reference](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/microsoft-foundry/foundry-agent/create/references/toolbox-reference.md) — endpoint format, MCP protocol, OAuth consent handling, citation patterns, and troubleshooting.
-> - [Use toolbox in a hosted agent](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/microsoft-foundry/foundry-agent/create/references/use-toolbox-in-hosted-agent.md) — endpoint resolution, env-var contract, payload shape, code integration patterns, and tracing.
-
-The agent reads the toolbox's MCP endpoint from the `TOOLBOX_ENDPOINT` environment variable. The sample bundles a [`toolbox.yaml`](toolbox.yaml) that defines `web_search` plus the public Microsoft Learn MCP server (no authentication). Create the toolbox once from that file:
-
-```bash
-azd ai toolbox create my-toolbox --from-file ./toolbox.yaml
-```
-
-The first version becomes the default automatically. Manage with `azd ai toolbox list`, `azd ai toolbox show my-toolbox`, `azd ai toolbox version list my-toolbox`, and `azd ai toolbox delete my-toolbox --force`.
-
-To stage incremental changes safely, use `azd ai toolbox connection add/remove` and `azd ai toolbox skill add/list/remove` &mdash; each creates a new toolbox version that carries forward existing connections and skills but **doesn't** change the default. Promote a version with `azd ai toolbox publish my-toolbox <version>` when you're ready to make it active.
-
-`azd ai toolbox create` prints the toolbox's versioned MCP endpoint. Copy that endpoint and set it as `TOOLBOX_ENDPOINT`: run `azd env set TOOLBOX_ENDPOINT "<endpoint>"` for deployed agents, or put it in `.env` for local runs. The endpoint looks like `https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/my-toolbox/versions/1/mcp?api-version=v1`.
-
-> [!NOTE]
-> To attach tools that need credentials (MCP servers with API keys or OAuth, Azure AI Search, Bing Custom Search, and more), create a project connection with `azd ai connection create` and reference it from `toolbox.yaml`.
-
-### Environment Variables
-
-See [`.env.example`](.env.example) or `.env` for the full list of environment variables this sample uses.
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint. Auto-injected in hosted containers; set automatically by `azd ai agent run` locally. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name — must match your Foundry project deployment. Declared in `agent.manifest.yaml`. |
-| `TOOLBOX_ENDPOINT` | Yes | Full toolbox MCP endpoint URL. Copy the versioned endpoint from the `azd ai toolbox create` output. |
-| `TOOLBOX_NAME` | Optional | Toolbox name. If `TOOLBOX_ENDPOINT` isn't set, the agent builds the latest-version endpoint from this and `FOUNDRY_PROJECT_ENDPOINT`. |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Recommended | Enables telemetry. Auto-injected in hosted containers; set manually for local dev. |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name. `agent.yaml` defaults to `gpt-4.1` |
+| `TOOLBOX_ENDPOINT` | Yes, unless `TOOLBOX_NAME` is set | Full toolbox MCP endpoint URL. Declared in `agent.yaml` and `.env.example` |
+| `TOOLBOX_NAME` | No | Alternative to `TOOLBOX_ENDPOINT`; the agent reads `TOOLBOX_<NAME>_MCP_ENDPOINT` if injected, or constructs a latest-version endpoint from `FOUNDRY_PROJECT_ENDPOINT` |
+| `FOUNDRY_AGENT_TOOLBOX_FEATURES` | No | Feature flag header value for toolbox calls. Defaults to `Toolboxes=V1Preview` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Application Insights connection string. Auto-injected when hosted — only needed locally for telemetry |
 
-Set `TOOLBOX_ENDPOINT` to the full MCP URL. Two forms are supported:
+Set `TOOLBOX_ENDPOINT` to either the latest-version endpoint or a version-pinned endpoint:
+
 ```
-# Latest version:
 https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<toolbox-name>/mcp?api-version=v1
-
-# Pinned to a specific version:
 https://<account>.services.ai.azure.com/api/projects/<project>/toolboxes/<toolbox-name>/versions/<version>/mcp?api-version=v1
 ```
-Set `TOOLBOX_ENDPOINT` in `.env` for local dev, or via `azd env set TOOLBOX_ENDPOINT "<url>"` for deployed agents.
 
-### Running the Sample
+## Running Locally
 
-#### Using `azd` (Recommended)
+### Prerequisites
+
+- Python 3.10+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- A Foundry toolbox created from [toolbox.yaml](toolbox.yaml), or another toolbox MCP endpoint you can access
+- Azure credentials with access to the Foundry project and toolbox (for example, `az login`)
+
+### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+```
+
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
 ```
 
-The agent starts on `http://localhost:8088`.
+The agent starts on `http://localhost:8088/`.
 
-#### Using the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-Chat with a running agent using the **Agent Inspector**:
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
 
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
 
-#### Without `azd`
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
-cp .env.example .env  # skip if .env already exists
-# Edit .env and fill in your values, then:
-export $(grep -v '^#' .env | xargs)
-
-python -m venv .venv
-source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 python main.py
 ```
 
-The agent starts on `http://localhost:8088`.
+The agent starts on `http://localhost:8088/`.
 
-### Testing
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
 
 **Bash:**
 ```bash
@@ -148,21 +117,90 @@ azd ai agent invoke --local '{"message": "Search the web for Azure AI Foundry ne
 azd ai agent invoke --local '{\"message\": \"Search the web for Azure AI Foundry news\"}'
 ```
 
-Or use `curl`:
+**Test with curl:**
 
 ```bash
 # Turn 1
 curl -sS -N -X POST "http://localhost:8088/invocations?agent_session_id=chat-001" \
-    -H "Content-Type: application/json" \
-    -d '{"message": "Search the web for Azure AI Foundry news"}'
+  -H "Content-Type: application/json" \
+  -d '{"message": "Search the web for Azure AI Foundry news"}'
 
 # Turn 2 (same session)
 curl -sS -N -X POST "http://localhost:8088/invocations?agent_session_id=chat-001" \
-    -H "Content-Type: application/json" \
-    -d '{"message": "Tell me more about the first result"}'
+  -H "Content-Type: application/json" \
+  -d '{"message": "Tell me more about the first result"}'
 ```
 
-### Deploying the Agent to Microsoft Foundry
+**SSE Event Format:**
+
+The agent streams the final tool-grounded answer and a completion event:
+
+```
+data: {"type": "token", "content": "..."}
+
+data: {"type": "done", "invocation_id": "...", "session_id": "...", "full_text": "..."}
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Creating the Toolbox
+
+The bundled [toolbox.yaml](toolbox.yaml) defines a `web_search` tool plus the public Microsoft Learn MCP server:
+
+```bash
+azd ai toolbox create my-toolbox --from-file ./toolbox.yaml
+```
+
+The command prints the toolbox MCP endpoint. Copy it into your local `.env` and, for deployment, store it in the `azd` environment:
+
+```bash
+azd env set TOOLBOX_ENDPOINT "<endpoint-from-output>"
+```
+
+Manage toolboxes with `azd ai toolbox list`, `azd ai toolbox show my-toolbox`, `azd ai toolbox version list my-toolbox`, and `azd ai toolbox delete my-toolbox --force`. To stage incremental changes, use `azd ai toolbox connection add/remove` and `azd ai toolbox skill add/list/remove`; promote a version with `azd ai toolbox publish my-toolbox <version>`.
+
+To attach tools that need credentials (MCP servers with API keys or OAuth, Azure AI Search, Bing Custom Search, and more), create a project connection with `azd ai connection create` and reference it from `toolbox.yaml`.
+
+## Supported Scenarios
+
+The broader toolbox sample set documents these scenarios:
+
+<details>
+<summary><strong>View supported toolbox scenarios</strong></summary>
+
+1. **Web Search** — Bing web search
+2. **File Search** — Vector store RAG search
+3. **Code Interpreter** — Python code execution
+4. **MCP Key-Auth (GitHub)** — GitHub MCP with PAT
+5. **MCP No-Auth** — Public MCP servers
+6. **MCP OAuth (Managed)** — Foundry-managed OAuth
+7. **MCP OAuth (Custom)** — Bring-your-own OAuth app
+8. **MCP Agent Identity** — Entra ID agent identity
+9. **Azure AI Search** — Search index queries
+10. **A2A (Agent-to-Agent)** — Remote agent delegation
+11. **Bing Custom Search** — Scoped web search
+12. **OpenAPI Key-Auth** — REST API integration
+13. **MCP OAuth (Entra Passthrough)** — User identity delegation
+14. **Multi-Tool Toolbox** — Web search plus GitHub MCP combined
+
+See [`samples/python/toolbox/azd/README.md`](../../../../toolbox/azd/README.md#supported-scenarios) for full scenario details and manifest examples.
+
+</details>
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -176,8 +214,14 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
-azd ai agent invoke "Search the web for Azure AI Foundry news"
+azd ai agent invoke '{"message": "Search the web for Azure AI Foundry news"}'
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke '{\"message\": \"Search the web for Azure AI Foundry news\"}'
 ```
 
 To stream logs from the running agent:
@@ -188,9 +232,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-#### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -203,35 +248,8 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
----
-
-## Supported Scenarios
-
-The sample toolbox can be configured for any of these 14 scenarios. For each scenario, create a `agent.manifest.yaml` file (see examples below) and pass it to `azd ai agent init -m <manifest-file>`.
-
-<details>
-<summary><strong>View all 14 supported scenarios</strong></summary>
-
-Refer to [`samples/python/toolbox/azd/README.md`](../../../../toolbox/azd/README.md#supported-scenarios) for complete inline documentation of all scenarios including:
-
-1. **Web Search** — Bing web search (no auth required)
-2. **File Search** — Vector store RAG search
-3. **Code Interpreter** — Python code execution
-4. **MCP Key-Auth (GitHub)** — GitHub MCP with PAT
-5. **MCP No-Auth** — Public MCP servers
-6. **MCP OAuth (Managed)** — Foundry-managed OAuth
-7. **MCP OAuth (Custom)** — Bring-your-own OAuth app
-8. **MCP Agent Identity** — Entra ID agent identity
-9. **Azure AI Search** — Search index queries
-10. **A2A (Agent-to-Agent)** — Remote agent delegation
-11. **Bing Custom Search** — Scoped web search
-12. **OpenAPI Key-Auth** — REST API integration
-13. **MCP OAuth (Entra Passthrough)** — User identity delegation
-14. **Multi-Tool Toolbox** — Web search + GitHub MCP combined
-
-Each scenario includes a complete `agent.manifest.yaml` example with parameter definitions and resource configurations.
-
 </details>
+
 ## Troubleshooting
 
 ### Images built on Apple Silicon or other ARM64 machines do not work on our service

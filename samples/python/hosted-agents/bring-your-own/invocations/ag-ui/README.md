@@ -1,33 +1,46 @@
 **IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-# AG-UI Protocol — Invocations (Pydantic AI)
+# AG-UI Protocol Agent (Invocations Protocol)
 
-A minimal getting-started agent implementing the [AG-UI protocol](https://docs.ag-ui.com/introduction) over the Foundry invocations protocol, using [Pydantic AI](https://ai.pydantic.dev/) with Azure OpenAI. **Zero manual event translation** — Pydantic AI's built-in `handle_ag_ui_request` handles the full AG-UI lifecycle automatically.
+A minimal Bring Your Own hosted agent implementing the [AG-UI protocol](https://docs.ag-ui.com/introduction) over the Microsoft Foundry **Invocations protocol**. It uses [Pydantic AI](https://ai.pydantic.dev/) with an Azure OpenAI Responses model and streams standard AG-UI events as SSE.
 
 ## How It Works
 
-1. Receives an AG-UI `RunAgentInput` payload via `POST /invocations`
-2. Pydantic AI's `handle_ag_ui_request` runs the agent and streams AG-UI events (`RUN_STARTED`, `TEXT_MESSAGE_*`, `TOOL_CALL_*`, `RUN_FINISHED`) as SSE — no manual translation needed
-3. The agent uses Azure OpenAI (Foundry models) via `AzureProvider`
+1. [main.py](main.py) reads `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME`, derives the Azure OpenAI endpoint, and authenticates with `DefaultAzureCredential`
+2. It creates an `AsyncAzureOpenAI` client, wraps it in a Pydantic AI `OpenAIResponsesModel`, and builds an `Agent` with the instruction *"You are a helpful assistant."*
+3. `InvocationAgentServerHost` exposes the Foundry `POST /invocations` endpoint
+4. The invocation handler passes the full Starlette request to Pydantic AI's `handle_ag_ui_request`, so the request body must be an AG-UI `RunAgentInput` payload (`threadId`, `runId`, `messages`, `tools`, `context`, and related fields)
+5. Pydantic AI streams AG-UI lifecycle events such as `RUN_STARTED`, `TEXT_MESSAGE_CONTENT`, and `RUN_FINISHED` as Server-Sent Events
+6. The agent starts on `http://localhost:8088/`
 
 ## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint (auto-injected in hosted containers) |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name declared in `agent.manifest.yaml` |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Application Insights connection string (auto-injected in hosted containers) |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4.1-mini`). Declared in `agent.yaml` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Application Insights connection string. Auto-injected when hosted — only needed locally for telemetry |
 
-> **Note:** Authentication uses `DefaultAzureCredential` (managed identity, Azure CLI, etc.) — no API key needed.
+Authentication uses Managed Identity via `DefaultAzureCredential`; no API key is required.
 
 ## Running Locally
 
 ### Prerequisites
 
 - Python 3.10+
-- A Foundry project with a deployed model
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- Azure credentials available to `DefaultAzureCredential` (for example, `az login`)
 
 ### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+```
+
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
@@ -35,83 +48,113 @@ azd ai agent run
 
 The agent starts on `http://localhost:8088/`.
 
-### Using the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-Chat with a running agent using the **Agent Inspector**:
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
 
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
 
-### Without `azd`
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env  # then fill in values (skip if .env already exists)
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 python main.py
 ```
 
 The agent starts on `http://localhost:8088/`.
 
-## Invoke with azd
+</details>
 
-### Local
+## Invoke
+
+### Using azd
+
+**Local:**
 
 **Bash:**
 ```bash
-azd ai agent invoke --local '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
+azd ai agent invoke --local '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello from AG-UI"}], "tools": [], "context": [], "forwardedProps": {}}'
 ```
 
 **PowerShell:**
 ```powershell
-azd ai agent invoke --local '{\"threadId\": \"thread-1\", \"runId\": \"run-1\", \"state\": {}, \"messages\": [{\"id\": \"msg-1\", \"role\": \"user\", \"content\": \"Hello\"}], \"tools\": [], \"context\": [], \"forwardedProps\": {}}'
+azd ai agent invoke --local '{\"threadId\": \"thread-1\", \"runId\": \"run-1\", \"state\": {}, \"messages\": [{\"id\": \"msg-1\", \"role\": \"user\", \"content\": \"Hello from AG-UI\"}], \"tools\": [], \"context\": [], \"forwardedProps\": {}}'
 ```
 
-### Remote (after `azd up`)
-
-**Bash:**
-```bash
-azd ai agent invoke '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
-```
-
-**PowerShell:**
-```powershell
-azd ai agent invoke '{\"threadId\": \"thread-1\", \"runId\": \"run-1\", \"state\": {}, \"messages\": [{\"id\": \"msg-1\", \"role\": \"user\", \"content\": \"Hello\"}], \"tools\": [], \"context\": [], \"forwardedProps\": {}}'
-```
-
-### Test with curl
+**Test with curl:**
 
 ```bash
 curl -N -X POST http://localhost:8088/invocations \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
-  -d '{
-    "threadId": "thread-123",
-    "runId": "run-456",
-    "state": {},
-    "messages": [{"id": "msg-1", "role": "user", "content": "Hello!"}],
-    "tools": [],
-    "context": [],
-    "forwardedProps": {}
-  }'
+  -d '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello from AG-UI"}], "tools": [], "context": [], "forwardedProps": {}}'
 ```
 
-### SSE Event Format
+**SSE Event Format:**
 
 Standard AG-UI events are streamed automatically:
 
 ```
-data: {"type":"RUN_STARTED","threadId":"thread-123","runId":"run-456"}
+data: {"type":"RUN_STARTED","threadId":"thread-1","runId":"run-1"}
+
 data: {"type":"TEXT_MESSAGE_START","messageId":"...","role":"assistant"}
+
 data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"...","delta":"Hello"}
-data: {"type":"TEXT_MESSAGE_CONTENT","messageId":"...","delta":"! How"}
-data: {"type":"TEXT_MESSAGE_END","messageId":"..."}
-data: {"type":"RUN_FINISHED","threadId":"thread-123","runId":"run-456"}
+
+...
+
+data: {"type":"RUN_FINISHED","threadId":"thread-1","runId":"run-1"}
 ```
 
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Learn More
+
+- [AG-UI Protocol](https://docs.ag-ui.com/introduction) — event types, lifecycle, and tools
+- [Pydantic AI AG-UI docs](https://ai.pydantic.dev/ag-ui/) — `handle_ag_ui_request` integration
+- [AG-UI Dojo](https://dojo.ag-ui.com/) — interactive playground for testing AG-UI agents
+
 ## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -125,8 +168,14 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
-azd ai agent invoke '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello"}], "tools": [], "context": [], "forwardedProps": {}}'
+azd ai agent invoke '{"threadId": "thread-1", "runId": "run-1", "state": {}, "messages": [{"id": "msg-1", "role": "user", "content": "Hello from AG-UI"}], "tools": [], "context": [], "forwardedProps": {}}'
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke '{\"threadId\": \"thread-1\", \"runId\": \"run-1\", \"state\": {}, \"messages\": [{\"id\": \"msg-1\", \"role\": \"user\", \"content\": \"Hello from AG-UI\"}], \"tools\": [], \"context\": [], \"forwardedProps\": {}}'
 ```
 
 To stream logs from the running agent:
@@ -137,9 +186,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -152,47 +202,24 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Learn More
-
-- [AG-UI Protocol](https://docs.ag-ui.com/introduction) — event types, lifecycle, tools
-- [Pydantic AI AG-UI docs](https://ai.pydantic.dev/ag-ui/) — `to_ag_ui()`, `handle_ag_ui_request`
-- [AG-UI Dojo](https://dojo.ag-ui.com/) — interactive playground for testing AG-UI agents
+</details>
 
 ## Troubleshooting
 
-### Azure OpenAI Permission Denied (401)
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
-If you see an error like:
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
 
-```
-Error calling Azure OpenAI: Error code: 401 - {'error': {'code': 'PermissionDenied', 'message': 'The principal <principal-id> lacks the required data action Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action to perform POST /openai/deployments/{deployment-id}/chat/completions operation.'}}
-```
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 
-The identity running the agent does not have the required RBAC roles on the Azure AI Foundry project. Assign the following roles:
-
-- **Cognitive Services OpenAI User**
-- **Foundry User**
-
-Use the Azure CLI to assign them:
+**Fix for local builds:**
 
 ```bash
-# Set your variables
-SUBSCRIPTION_ID="<your-subscription-id>"
-RESOURCE_GROUP="<your-resource-group>"
-PROJECT_NAME="<your-ai-foundry-project-name>"
-PRINCIPAL_ID="<principal-id-from-error-message>"
-
-# Assign "Cognitive Services OpenAI User" role
-az role assignment create \
-  --assignee "$PRINCIPAL_ID" \
-  --role "Cognitive Services OpenAI User" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.MachineLearningServices/workspaces/$PROJECT_NAME"
-
-# Assign "Foundry User" role
-az role assignment create \
-  --assignee "$PRINCIPAL_ID" \
-  --role "Foundry User" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.MachineLearningServices/workspaces/$PROJECT_NAME"
+docker build --platform=linux/amd64 -t image .
 ```
 
-> **Note:** It may take a few minutes for role assignments to propagate. Retry the request after waiting.
+This forces the image to be built for the required `amd64` architecture.
+
+### Azure OpenAI Permission Denied (401)
+
+If the model request fails with `PermissionDenied` or `401 Unauthorized`, the identity running the agent may not have the required Foundry/OpenAI data-plane roles on the project. Assign the appropriate roles (for example, **Foundry User** and **Cognitive Services OpenAI User**) to the local user or hosted agent identity, then wait a few minutes for RBAC propagation before retrying.

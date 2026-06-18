@@ -1,61 +1,102 @@
-# Note-Taking Agent — Python (Invocations Protocol)
+**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-A note-taking agent built with `azure-ai-agentserver-invocations` and Azure OpenAI. Uses function calling to save and retrieve notes, with per-session JSONL persistence accessible via the Session Files API.
+# Note-Taking Agent (Invocations Protocol)
 
-## Features
+A Bring Your Own hosted note-taking agent using the [azure-ai-agentserver-invocations](https://pypi.org/project/azure-ai-agentserver-invocations/) SDK and the Foundry Responses API. It uses model function calling to save and retrieve per-session notes, then streams friendly responses as SSE.
 
-- **Save notes** — natural language commands like "save a note - buy groceries"
-- **Retrieve notes** — "show me my notes" returns all saved entries with timestamps
-- **Per-session isolation** — each session gets its own note file
-- **Streaming responses** — real-time SSE streaming via the Invocations protocol
-- **Session Files API** — notes stored at `$HOME` are accessible via the platform file API
+## How It Works
 
-## Prerequisites
-
-- Python 3.12+
-- Azure OpenAI resource with a deployed model (e.g., `gpt-4.1-mini`)
-- Azure credentials configured (e.g., `az login`)
+1. [main.py](main.py) creates a Foundry Responses client with `DefaultAzureCredential`, `FOUNDRY_PROJECT_ENDPOINT`, and `AZURE_AI_MODEL_DEPLOYMENT_NAME`
+2. It defines two Responses API function tools: `save_note` and `get_notes`
+3. [note_store.py](note_store.py) persists notes in thread-safe per-session JSONL files named `notes_<session>.jsonl` under `$HOME`, making them accessible through the Session Files API when hosted
+4. `InvocationAgentServerHost` exposes `POST /invocations`
+5. The handler requires a JSON object with a non-empty `message` string, sends it to the model with tool definitions, executes any requested function calls, and feeds tool outputs back to the model
+6. Final responses are streamed as SSE `token` events followed by a `done` event with `invocation_id`, `session_id`, and `full_text`
 
 ## Environment Variables
 
-| Variable | Description | Example |
-|---|---|---|
-| `FOUNDRY_PROJECT_ENDPOINT` | Foundry project endpoint (auto-injected when deployed) | `https://account.services.ai.azure.com/api/projects/proj` |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment name | `gpt-4.1-mini` |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4.1-mini`). Declared in `agent.yaml` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Application Insights connection string. Auto-injected when hosted — only needed locally for telemetry |
 
-## Run Locally
+Authentication uses Managed Identity via `DefaultAzureCredential`; no API key is required.
+
+## Running Locally
+
+### Prerequisites
+
+- Python 3.12+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- Azure credentials available to `DefaultAzureCredential` (for example, `az login`)
 
 ### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+```
+
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
 ```
 
-### Using the Foundry Toolkit VS Code Extension
+The agent starts on `http://localhost:8088/`.
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-Chat with a running agent using the **Agent Inspector**:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
 
-### Without `azd`
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
-# Install dependencies
 pip install -r requirements.txt
-
-# Set environment variables
-export FOUNDRY_PROJECT_ENDPOINT="https://account.services.ai.azure.com/api/projects/proj"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-
-# Start the agent
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 python main.py
 ```
 
-## Test with azd
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
 
 **Bash:**
 ```bash
@@ -67,41 +108,73 @@ azd ai agent invoke --local '{"message": "save a note - book reservation for din
 azd ai agent invoke --local '{\"message\": \"save a note - book reservation for dinner\"}'
 ```
 
-## Test with curl
-
-### Save a note
+**Test with curl:**
 
 ```bash
+# Save a note
 curl -N -X POST "http://localhost:8088/invocations?agent_session_id=my-session" \
   -H "Content-Type: application/json" \
   -d '{"message": "save a note - book reservation for dinner"}'
-```
 
-### Save another note
-
-```bash
+# Save another note in the same session
 curl -N -X POST "http://localhost:8088/invocations?agent_session_id=my-session" \
   -H "Content-Type: application/json" \
   -d '{"message": "save a note - buy groceries for the weekend"}'
-```
 
-### Get all notes
-
-```bash
+# Retrieve notes from the same session
 curl -N -X POST "http://localhost:8088/invocations?agent_session_id=my-session" \
   -H "Content-Type: application/json" \
   -d '{"message": "show me all my notes"}'
 ```
 
-### New session (isolated)
+**SSE Event Format:**
 
-```bash
-curl -N -X POST "http://localhost:8088/invocations?agent_session_id=another-session" \
-  -H "Content-Type: application/json" \
-  -d '{"message": "show me my notes"}'
+The agent streams text followed by a final completion event:
+
+```
+data: {"type": "token", "content": "Saved"}
+
+data: {"type": "token", "content": " your note."}
+
+...
+
+data: {"type": "done", "invocation_id": "...", "session_id": "...", "full_text": "..."}
 ```
 
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Features
+
+- **Save notes** — natural language commands like `save a note - buy groceries`
+- **Retrieve notes** — requests like `show me my notes` return saved entries with timestamps
+- **Per-session isolation** — each `agent_session_id` maps to its own JSONL file
+- **Session Files API** — notes stored under `$HOME` are accessible through hosted agent session files
+
+## File Structure
+
+| File | Description |
+|---|---|
+| `main.py` | Agent entry point with the Invocations handler and Responses API function calling loop |
+| `note_store.py` | Thread-safe per-session JSONL note persistence |
+| `requirements.txt` | Python dependencies |
+| `Dockerfile` | Container image definition |
+| `agent.yaml` | Hosted agent configuration |
+| `agent.manifest.yaml` | Sample manifest metadata and model resource declaration |
+
 ## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -115,8 +188,14 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
 azd ai agent invoke '{"message": "save a note - book reservation for dinner"}'
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke '{\"message\": \"save a note - book reservation for dinner\"}'
 ```
 
 To stream logs from the running agent:
@@ -127,9 +206,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -142,53 +222,24 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## File Structure
-
-| File | Description |
-|---|---|
-| `main.py` | Agent entry point with Invocations handler and OpenAI function calling |
-| `note_store.py` | Thread-safe per-session JSONL note persistence |
-| `requirements.txt` | Python dependencies |
-| `Dockerfile` | Container image definition with SSL cert support |
-| `agent.yaml` | Agent hosting configuration |
-| `agent.manifest.yaml` | Agent metadata and template |
-| `.dockerignore` | Docker build exclusions |
+</details>
 
 ## Troubleshooting
 
-### Azure OpenAI Permission Denied (401)
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
-If you see an error like:
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
 
-```
-Error calling Azure OpenAI: Error code: 401 - {'error': {'code': 'PermissionDenied', 'message': 'The principal <principal-id> lacks the required data action Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action to perform POST /openai/deployments/{deployment-id}/chat/completions operation.'}}
-```
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 
-The identity running the agent does not have the required RBAC roles on the Azure AI Foundry project. Assign the following roles:
-
-- **Cognitive Services OpenAI User**
-- **Foundry User**
-
-Use the Azure CLI to assign them:
+**Fix for local builds:**
 
 ```bash
-# Set your variables
-SUBSCRIPTION_ID="<your-subscription-id>"
-RESOURCE_GROUP="<your-resource-group>"
-PROJECT_NAME="<your-ai-foundry-project-name>"
-PRINCIPAL_ID="<principal-id-from-error-message>"
-
-# Assign "Cognitive Services OpenAI User" role
-az role assignment create \
-  --assignee "$PRINCIPAL_ID" \
-  --role "Cognitive Services OpenAI User" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.MachineLearningServices/workspaces/$PROJECT_NAME"
-
-# Assign "Foundry User" role
-az role assignment create \
-  --assignee "$PRINCIPAL_ID" \
-  --role "Foundry User" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.MachineLearningServices/workspaces/$PROJECT_NAME"
+docker build --platform=linux/amd64 -t image .
 ```
 
-> **Note:** It may take a few minutes for role assignments to propagate. Retry the request after waiting.
+This forces the image to be built for the required `amd64` architecture.
+
+### Azure OpenAI Permission Denied (401)
+
+If model calls fail with `PermissionDenied` or `401 Unauthorized`, the identity running the agent does not have the required RBAC roles on the Azure AI Foundry project. Assign **Foundry User** and, if needed for the model endpoint, **Cognitive Services OpenAI User**, then wait a few minutes for role assignments to propagate.

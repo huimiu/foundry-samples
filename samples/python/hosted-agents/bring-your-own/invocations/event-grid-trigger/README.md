@@ -1,344 +1,280 @@
-# What this sample demonstrates
+**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-A **Bring Your Own** [Invocations protocol](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/hosted-agents) hosted agent that is **event-driven from Azure Storage**, with Event Grid POSTing **directly** to the agent. Event Grid authenticates the delivery with the Event Grid system topic's **system-assigned managed identity (SAMI)** whose AAD audience is set to `https://ai.azure.com` (the Foundry data plane), so the agent's standard token validation accepts the request. The agent then reads the blob with its **per-agent Microsoft Entra identity**, summarizes it with a Foundry model, and writes the result as `<name>.summary.json` to a **separate summary container** so the full pipeline is verifiable from Storage alone.
+# Event Grid Blob Trigger Agent (Invocations Protocol)
 
-End-to-end flow:
-
-```
-user uploads blob → input container → Event Grid system topic
-   → EG delivery (system topic SAMI mints AAD token for https://ai.azure.com)
-       → POST EG event batch to <agent-invocations-url>
-           → agent extracts (container, name) from data.url,
-             downloads blob (per-agent MI),
-             calls model to summarize,
-             writes <name>.summary.json to the summary container
-                ↳ also logged to stdout (azd ai agent monitor)
-```
-
-Using a **sibling output container** instead of the input container is what keeps the pipeline loop-free: the Event Grid subscription is scoped to the input container, so writes to the summary container never re-fire it.
-
-This is the canonical **event-driven Azure** pattern for hosted agents. It complements [`09-downstream-azure`](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/09-downstream-azure/README.md), which shows a chat-driven agent calling Azure data-plane services; here, an Azure event source pushes work *into* the agent.
+A Bring Your Own hosted agent that receives Azure Storage BlobCreated events through the Microsoft Foundry **Invocations protocol**. Event Grid posts directly to the agent with managed identity authentication; the agent downloads the new blob, summarizes it with a Foundry model, and writes a summary JSON file to a separate container.
 
 ## How It Works
 
-### Authentication
+1. Event Grid delivers events to `POST /invocations` using a system topic system-assigned managed identity with audience `https://ai.azure.com`
+2. [main.py](main.py) parses the JSON request body and accepts three shapes: Event Grid `SubscriptionValidationEvent`, Event Grid `Microsoft.Storage.BlobCreated` batches, or direct `{"container": "...", "name": "..."}` test payloads
+3. For BlobCreated and direct payloads, the agent extracts the container/blob name, downloads `.txt` or `.md` content from Azure Storage with the per-agent managed identity, and truncates input to 64 KiB
+4. The agent calls the Foundry Responses API with the configured model deployment to summarize the file in 3–5 bullet points
+5. It writes `<name>.summary.json` to `AZURE_STORAGE_SUMMARY_CONTAINER_NAME`, logs the output path, and returns a JSON response
+6. Writing to a sibling summary container avoids re-triggering the Event Grid subscription that watches the input container
 
-Event Grid supports [delivery with managed identity](https://learn.microsoft.com/en-us/azure/event-grid/managed-service-identity): each event POST carries an AAD bearer token minted from a managed identity attached to the topic. By enabling a **system-assigned managed identity (SAMI)** on the system topic, setting the delivery audience to `https://ai.azure.com`, and giving that SAMI the **Foundry User** role on the Foundry project, the agent's invocations endpoint accepts the call as if it came from any other Foundry caller — no separate identity resource, no shared secrets, and no agent-side code to verify the EG handshake header.
+## Environment Variables
 
-### The handler
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4.1-mini`). Declared in `agent.yaml` |
+| `AZURE_STORAGE_ACCOUNT_NAME` | Yes | Storage account containing the input and summary containers |
+| `AZURE_STORAGE_SUMMARY_CONTAINER_NAME` | Yes | Container where the agent writes `<name>.summary.json`. Must be different from the watched input container |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Application Insights connection string. Auto-injected when hosted — only needed locally for telemetry |
 
-See [`main.py`](main.py). The handler accepts three POST shapes:
+## Running Locally
 
-1. **Event Grid `SubscriptionValidationEvent`** — answered with `{"validationResponse": "<code>"}` so the EG subscription can finish provisioning.
-2. **Event Grid `Microsoft.Storage.BlobCreated` batch** — the container and blob name are extracted from `data.url`.
-3. **Direct `{"container": "...", "name": "..."}`** — useful for quick local invokes via `azd ai agent invoke`.
+### Prerequisites
 
-For (2) and (3), the agent downloads the blob (truncated to 64 KiB), summarizes it with the Foundry Responses API, writes `<name>.summary.json` to the configured summary container (`AZURE_STORAGE_SUMMARY_CONTAINER_NAME`), and logs `event-grid-trigger:summary blob=<container>/<name> output=<sum-container>/<name>.summary.json …`. Stream the logs with `azd ai agent monitor`, or just open the summary container in the Azure portal or Storage Explorer.
+- Python 3.10+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- An Azure Storage account with an input container and a separate summary container
+- Azure credentials with permission to assign RBAC roles and create Event Grid system topics/subscriptions
 
-> The summary container is intentionally **different** from the input container. The Event Grid subscription is scoped to the input container, so writes to a sibling container do not re-trigger the agent. Do not point the agent's output at the same container the EG subscription watches.
+### Using `azd` (Recommended)
 
-## Prerequisites
-
-In addition to the prerequisites listed in the [parent README](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/README.md), this sample requires:
-
-- An **Azure Storage account** with two existing containers: one for **inputs** (the Event Grid subscription watches this one) and a separate one for **summaries** the agent writes back. The two must be distinct so writes to the summary container don't re-trigger the agent.
-
-Set the following shell variables — the rest of the commands below assume them.
-
-Bash:
+Create a local `.env` file from the sample template and fill in the required values:
 
 ```bash
-RG="<your-resource-group>"
-AZURE_STORAGE_ACCOUNT_NAME="<your-storage-account-name>"
-INPUT_CONTAINER="<your-input-container>"
-SUMMARY_CONTAINER="<your-summary-container>"
-FOUNDRY_ACCOUNT_NAME="<your-foundry-account-name>"
-FOUNDRY_PROJECT_NAME="<your-foundry-project-name>"
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 ```
 
-PowerShell:
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
-```powershell
-$RG = "<your-resource-group>"
-$AZURE_STORAGE_ACCOUNT_NAME = "<your-storage-account-name>"
-$INPUT_CONTAINER = "<your-input-container>"
-$SUMMARY_CONTAINER = "<your-summary-container>"
-$FOUNDRY_ACCOUNT_NAME = "<your-foundry-account-name>"
-$FOUNDRY_PROJECT_NAME = "<your-foundry-project-name>"
+```bash
+azd ai agent run
 ```
 
-## 1. Deploy the agent
+The agent starts on `http://localhost:8088/`.
 
-[agent.yaml](agent.yaml) declares two environment variables and binds each value to an `${...}` placeholder that `azd` resolves from the **azd environment** at deploy time (your shell's `export` / `$env:` values are not propagated to the deployed agent). Set them once with `azd env set` before deploying:
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-```powershell
-azd env set AZURE_STORAGE_ACCOUNT_NAME "<storage-account-name>"
-azd env set AZURE_STORAGE_SUMMARY_CONTAINER_NAME "<summary-container-name>"
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
 ```
 
-Then follow the [Deploy any sample](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/README.md#deploy-any-sample) section in the parent README:
+The agent starts on `http://localhost:8088/`.
 
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local '{"container": "input", "name": "hello.txt"}'
+```
+
+**PowerShell:**
 ```powershell
+azd ai agent invoke --local '{\"container\": \"input\", \"name\": \"hello.txt\"}'
+```
+
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/invocations \
+  -H "Content-Type: application/json" \
+  -d '{"container": "input", "name": "hello.txt"}' | jq .
+```
+
+The direct invoke payload assumes `input/hello.txt` exists in `AZURE_STORAGE_ACCOUNT_NAME` and that the caller identity has blob read access.
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Event Grid Setup and Verification
+
+After you deploy the agent using the section below, complete these Event Grid-specific steps.
+
+1. Store the storage settings in your `azd` environment so they are injected into the hosted agent:
+
+   ```bash
+   azd env set AZURE_STORAGE_ACCOUNT_NAME "<storage-account-name>"
+   azd env set AZURE_STORAGE_SUMMARY_CONTAINER_NAME "<summary-container-name>"
+   ```
+
+2. Grant the per-agent identity the required roles:
+
+   - **Storage Blob Data Reader** on the input container
+   - **Storage Blob Data Contributor** on the summary container
+   - **Foundry User** on the Foundry project
+
+   Get the identity with `azd ai agent show -o json` and use `instance_identity.principal_id` in role assignments.
+
+3. Create an Event Grid system topic on the storage account with system-assigned managed identity enabled, then grant that topic identity **Foundry User** on the Foundry project. Event delivery must request tokens for the `https://ai.azure.com` audience.
+
+4. Create the event subscription with `az rest` so you can set `deliveryWithResourceIdentity`:
+
+   ```bash
+   AGENT_URL=$(azd ai agent show -o json | jq -r '.agent_endpoints.invocations')
+   SUB_ID=$(az account show --query id -o tsv)
+   TENANT_ID=$(az account show --query tenantId -o tsv)
+
+   cat > eg-sub.json <<EOF
+   {
+     "properties": {
+       "deliveryWithResourceIdentity": {
+         "identity": { "type": "SystemAssigned" },
+         "destination": {
+           "endpointType": "WebHook",
+           "properties": {
+             "endpointUrl": "$AGENT_URL",
+             "azureActiveDirectoryTenantId": "$TENANT_ID",
+             "azureActiveDirectoryApplicationIdOrUri": "https://ai.azure.com"
+           }
+         }
+       },
+       "filter": {
+         "includedEventTypes": ["Microsoft.Storage.BlobCreated"],
+         "subjectBeginsWith": "/blobServices/default/containers/$INPUT_CONTAINER/"
+       },
+       "eventDeliverySchema": "EventGridSchema"
+     }
+   }
+   EOF
+
+   az rest --method put \
+     --url "https://management.azure.com/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.EventGrid/systemTopics/$TOPIC/eventSubscriptions/$SUB_NAME?api-version=2025-07-15-preview" \
+     --headers "Content-Type=application/json" \
+     --body @eg-sub.json
+   ```
+
+5. Upload a `.txt` or `.md` blob to the input container and verify `<name>.summary.json` appears in the summary container:
+
+   ```bash
+   echo "Hosted agents process Event Grid blob-created events end to end." > hello.txt
+   az storage blob upload --account-name "$AZURE_STORAGE_ACCOUNT_NAME" -c "$INPUT_CONTAINER" -f hello.txt -n hello.txt --auth-mode login
+   az storage blob download --account-name "$AZURE_STORAGE_ACCOUNT_NAME" -c "$SUMMARY_CONTAINER" -n hello.txt.summary.json --auth-mode login -f - | cat
+   ```
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
 azd deploy
 ```
 
-After deployment capture the **Agent Invocations URL** — `https://<host>/agents/<name>/endpoint/protocols/invocations?api-version=2025-11-15-preview` — printed by `azd ai agent show`.
+After deploying, invoke the agent running in Foundry:
 
-## 2. Grant the per-agent identity blob and Foundry access
+**Bash:**
+```bash
+azd ai agent invoke '{"container": "input", "name": "hello.txt"}'
+```
 
-The per-agent identity needs three role assignments:
+**PowerShell:**
+```powershell
+azd ai agent invoke '{\"container\": \"input\", \"name\": \"hello.txt\"}'
+```
 
-- **Storage Blob Data Reader** on the **input** container — to download the uploaded blob.
-- **Storage Blob Data Contributor** on the **summary** container — to write `<name>.summary.json`.
-- **Foundry User** on the **Foundry project** — to call the Responses API that produces the summary. The agent calls the Foundry project data plane with its own MI; without this role the call is rejected with `401 PermissionDenied: Principal does not have access to API/Operation`.
-
-`azd ai agent show` returns the per-agent identity's object id under `instance_identity.principal_id`; capture it together with the storage account and project scopes, then reuse them in the assignment commands below.
-
-Bash:
+To stream logs from the running agent:
 
 ```bash
-PRINCIPAL_ID=$(azd ai agent show -o json | jq -r '.instance_identity.principal_id')
-ACCOUNT_ID=$(az storage account show -n "$AZURE_STORAGE_ACCOUNT_NAME" --query id -o tsv)
-PROJECT_ID="$(az cognitiveservices account show -n "$FOUNDRY_ACCOUNT_NAME" -g "$RG" --query id -o tsv)/projects/$FOUNDRY_PROJECT_NAME"
-
-az role assignment create \
-  --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal \
-  --role "Storage Blob Data Reader" \
-  --scope "$ACCOUNT_ID/blobServices/default/containers/$INPUT_CONTAINER"
-
-az role assignment create \
-  --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal \
-  --role "Storage Blob Data Contributor" \
-  --scope "$ACCOUNT_ID/blobServices/default/containers/$SUMMARY_CONTAINER"
-
-az role assignment create \
-  --assignee-object-id "$PRINCIPAL_ID" --assignee-principal-type ServicePrincipal \
-  --role "Foundry User" --scope "$PROJECT_ID"
+azd ai agent monitor
 ```
 
-PowerShell:
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-```powershell
-$PRINCIPAL_ID = (azd ai agent show -o json | ConvertFrom-Json).instance_identity.principal_id
-$ACCOUNT_ID = az storage account show -n $AZURE_STORAGE_ACCOUNT_NAME --query id -o tsv
-$PROJECT_ID = "$(az cognitiveservices account show -n $FOUNDRY_ACCOUNT_NAME -g $RG --query id -o tsv)/projects/$FOUNDRY_PROJECT_NAME"
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-az role assignment create `
-  --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
-  --role "Storage Blob Data Reader" `
-  --scope "$ACCOUNT_ID/blobServices/default/containers/$INPUT_CONTAINER"
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
+5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-az role assignment create `
-  --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
-  --role "Storage Blob Data Contributor" `
-  --scope "$ACCOUNT_ID/blobServices/default/containers/$SUMMARY_CONTAINER"
-
-az role assignment create `
-  --assignee-object-id $PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
-  --role "Foundry User" --scope $PROJECT_ID
-```
-
-Role assignments take a minute or two to propagate.
-
-## 3. Create the Event Grid system topic with a system-assigned identity
-
-Create the topic on the storage account with **SAMI enabled**, then grant the topic's identity **Foundry User** on the Foundry project so the bearer tokens it mints for the `https://ai.azure.com` audience are accepted by the agent's invocations endpoint.
-
-Bash:
-
-```bash
-TOPIC="<your-system-topic-name>"
-SOURCE_ID=$(az storage account show -n "$AZURE_STORAGE_ACCOUNT_NAME" --query id -o tsv)
-TOPIC_LOCATION=$(az storage account show -n "$AZURE_STORAGE_ACCOUNT_NAME" --query location -o tsv)
-
-az eventgrid system-topic create \
-  -g "$RG" -n "$TOPIC" -l "$TOPIC_LOCATION" \
-  --topic-type microsoft.storage.storageaccounts --source "$SOURCE_ID" \
-  --identity systemassigned
-
-TOPIC_PRINCIPAL_ID=$(az eventgrid system-topic show -g "$RG" -n "$TOPIC" --query identity.principalId -o tsv)
-PROJECT_ID="$(az cognitiveservices account show -n "$FOUNDRY_ACCOUNT_NAME" -g "$RG" --query id -o tsv)/projects/$FOUNDRY_PROJECT_NAME"
-
-az role assignment create \
-  --assignee-object-id "$TOPIC_PRINCIPAL_ID" --assignee-principal-type ServicePrincipal \
-  --role "Foundry User" --scope "$PROJECT_ID"
-```
-
-PowerShell:
-
-```powershell
-$TOPIC = "<your-system-topic-name>"
-$SOURCE_ID = az storage account show -n $AZURE_STORAGE_ACCOUNT_NAME --query id -o tsv
-$TOPIC_LOCATION = az storage account show -n $AZURE_STORAGE_ACCOUNT_NAME --query location -o tsv
-
-az eventgrid system-topic create `
-  -g $RG -n $TOPIC -l $TOPIC_LOCATION `
-  --topic-type microsoft.storage.storageaccounts --source $SOURCE_ID `
-  --identity systemassigned
-
-$TOPIC_PRINCIPAL_ID = az eventgrid system-topic show -g $RG -n $TOPIC --query identity.principalId -o tsv
-$PROJECT_ID = "$(az cognitiveservices account show -n $FOUNDRY_ACCOUNT_NAME -g $RG --query id -o tsv)/projects/$FOUNDRY_PROJECT_NAME"
-
-az role assignment create `
-  --assignee-object-id $TOPIC_PRINCIPAL_ID --assignee-principal-type ServicePrincipal `
-  --role "Foundry User" --scope $PROJECT_ID
-```
-
-## 4. Create the event subscription with SAMI delivery
-
-Tell Event Grid to deliver to the agent's invocations URL as a webhook, authenticated by the system topic's SAMI with audience `https://ai.azure.com`.
-
-> The `az eventgrid system-topic event-subscription create` CLI does **not** expose the `deliveryWithResourceIdentity` property needed to attach the SAMI to delivery. Create the subscription with `az rest` (a direct ARM PUT) instead. The ARM resource path is `…/systemTopics/<topic>/eventSubscriptions/<sub-name>`.
-
-Bash:
-
-```bash
-SUB_NAME="blob-to-agent"
-SUB_ID=$(az account show --query id -o tsv)
-TENANT_ID=$(az account show --query tenantId -o tsv)
-AGENT_URL=$(azd ai agent show -o json | jq -r '.agent_endpoints.invocations')
-
-cat > eg-sub.json <<EOF
-{
-  "properties": {
-    "deliveryWithResourceIdentity": {
-      "identity": { "type": "SystemAssigned" },
-      "destination": {
-        "endpointType": "WebHook",
-        "properties": {
-          "endpointUrl": "$AGENT_URL",
-          "azureActiveDirectoryTenantId": "$TENANT_ID",
-          "azureActiveDirectoryApplicationIdOrUri": "https://ai.azure.com"
-        }
-      }
-    },
-    "filter": {
-      "includedEventTypes": ["Microsoft.Storage.BlobCreated"],
-      "subjectBeginsWith": "/blobServices/default/containers/$INPUT_CONTAINER/"
-    },
-    "eventDeliverySchema": "EventGridSchema"
-  }
-}
-EOF
-
-az rest --method put \
-  --url "https://management.azure.com/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.EventGrid/systemTopics/$TOPIC/eventSubscriptions/$SUB_NAME?api-version=2025-07-15-preview" \
-  --headers "Content-Type=application/json" \
-  --body @eg-sub.json
-```
-
-PowerShell:
-
-```powershell
-$SUB_NAME = "blob-to-agent"
-$SUB_ID = az account show --query id -o tsv
-$TENANT_ID = az account show --query tenantId -o tsv
-$AGENT_URL = (azd ai agent show -o json | ConvertFrom-Json).agent_endpoints.invocations
-
-$body = @{
-  properties = @{
-    deliveryWithResourceIdentity = @{
-      identity = @{ type = "SystemAssigned" }
-      destination = @{
-        endpointType = "WebHook"
-        properties = @{
-          endpointUrl = $AGENT_URL
-          azureActiveDirectoryTenantId = $TENANT_ID
-          azureActiveDirectoryApplicationIdOrUri = "https://ai.azure.com"
-        }
-      }
-    }
-    filter = @{
-      includedEventTypes = @("Microsoft.Storage.BlobCreated")
-      subjectBeginsWith = "/blobServices/default/containers/$INPUT_CONTAINER/"
-    }
-    eventDeliverySchema = "EventGridSchema"
-  }
-} | ConvertTo-Json -Depth 10
-
-$body | Out-File -FilePath eg-sub.json -Encoding ascii
-
-$url = "https://management.azure.com/subscriptions/$SUB_ID/resourceGroups/$RG/providers/Microsoft.EventGrid/systemTopics/$TOPIC/eventSubscriptions/${SUB_NAME}?api-version=2025-07-15-preview"
-
-az rest --method put --url $url `
-  --headers "Content-Type=application/json" `
-  --body "@eg-sub.json"
-```
-
-> The `@filename` syntax tells `az rest` to read the body from a file and set the correct `Content-Type` header. Passing a JSON string directly via `--body $var` in PowerShell can drop the content-type and yield `UnsupportedMediaType`.
-
-During the PUT, Event Grid POSTs a one-time `SubscriptionValidationEvent` to the agent's invocations URL; the handler answers it with `{"validationResponse": "<code>"}` and the subscription transitions to `provisioningState: Succeeded`. Confirm with `az rest` (the `az eventgrid` CLI uses an older API version that cannot read subscriptions configured with `deliveryWithResourceIdentity`):
-
-```powershell
-az rest --method get --url $url --query "properties.provisioningState" -o tsv
-```
-
-## 5. Try it & verify
-
-Upload a `.txt` (or `.md`) blob:
-
-Bash:
-
-```bash
-echo "Hosted agents process Event Grid blob-created events end to end via system-assigned MI delivery." > hello.txt
-az storage blob upload \
-  --account-name "$AZURE_STORAGE_ACCOUNT_NAME" \
-  -c "$INPUT_CONTAINER" -f hello.txt -n hello.txt --auth-mode login
-```
-
-PowerShell:
-
-```powershell
-"Hosted agents process Event Grid blob-created events end to end via system-assigned MI delivery." | Set-Content hello.txt
-az storage blob upload `
-  --account-name $AZURE_STORAGE_ACCOUNT_NAME `
-  -c $INPUT_CONTAINER -f hello.txt -n hello.txt --auth-mode login
-```
-
-Within a few seconds a corresponding summary blob should appear in the sibling container:
-
-Bash:
-
-```bash
-az storage blob download \
-  --account-name "$AZURE_STORAGE_ACCOUNT_NAME" \
-  -c "$SUMMARY_CONTAINER" -n hello.txt.summary.json --auth-mode login -f - | cat
-```
-
-PowerShell:
-
-```powershell
-az storage blob download `
-  --account-name $AZURE_STORAGE_ACCOUNT_NAME `
-  -c $SUMMARY_CONTAINER -n hello.txt.summary.json --auth-mode login -f hello.txt.summary.json
-Get-Content hello.txt.summary.json -Raw
-```
-
-Expected payload:
-
-```json
-{
-  "input": "<input-container>/hello.txt",
-  "elapsed_ms": 842,
-  "truncated": false,
-  "summary": "- Hosted agents …\n- …"
-}
-```
+</details>
 
 ## Troubleshooting
 
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.
+
 | Symptom | Likely cause |
 |---|---|
-| EG subscription provisioning fails with `Webhook validation handshake failed` | The agent didn't return the `validationResponse`. Confirm the deployed `main.py` includes the `_extract_subscription_validation_event` branch (`azd deploy`), and that the system topic's SAMI has **Foundry User** on the Foundry project so EG's token is accepted. |
-| `401 Unauthorized` from the agent on real events | The system topic's SAMI is missing **Foundry User** on the Foundry project, or the subscription is configured with the wrong audience (must be `https://ai.azure.com`) or wrong tenant id. |
-| `az eventgrid system-topic show --query identity.principalId` is empty | SAMI wasn't enabled on the topic. Re-run `az eventgrid system-topic create ... --identity systemassigned` (or `az eventgrid system-topic update --identity systemassigned`) and recheck. |
-| Agent trace shows `401 PermissionDenied: Principal does not have access to API/Operation` | Per-agent identity is missing **Foundry User** on the Foundry project (needed to call the Responses API that summarizes). Assign it in step 2. |
-| Agent returns `AuthorizationPermissionMismatch` reading the blob | Per-agent identity is missing **Storage Blob Data Reader** on the input container. |
-| Summary blob is never written | Per-agent identity is missing **Storage Blob Data Contributor** on the summary container, or the container does not exist. |
-| Agent fires twice per upload | Summary is being written into the **same** container the EG subscription watches — set `AZURE_STORAGE_SUMMARY_CONTAINER_NAME` to a different container. |
-| `System topic's location must match with location of the source resource` | Create the system topic in the storage account's region (step 3 reads it via `az storage account show --query location`). |
+| Event Grid subscription provisioning fails with `Webhook validation handshake failed` | The agent did not return `validationResponse`, or the system topic's managed identity is missing **Foundry User** on the Foundry project. |
+| `401 Unauthorized` from the agent on real events | The system topic identity is missing **Foundry User**, the subscription audience is not `https://ai.azure.com`, or the tenant ID is wrong. |
+| Agent trace shows `401 PermissionDenied` calling the model | The per-agent identity is missing **Foundry User** on the Foundry project. |
+| Agent returns `AuthorizationPermissionMismatch` reading the blob | The per-agent identity is missing **Storage Blob Data Reader** on the input container. |
+| Summary blob is never written | The per-agent identity is missing **Storage Blob Data Contributor** on the summary container, or the summary container does not exist. |
+| Agent fires twice per upload | The summary container is the same container watched by Event Grid. Use a distinct summary container. |
 
 ## See also
 
-- [Deliver events using managed identity](https://learn.microsoft.com/en-us/azure/event-grid/managed-service-identity) — the Event Grid docs for the managed-identity delivery pattern this sample uses.
-- [`09-downstream-azure`](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/09-downstream-azure/README.md) — the per-agent-identity + Azure RBAC pattern in a chat-driven (not event-driven) agent.
+- [Deliver events using managed identity](https://learn.microsoft.com/en-us/azure/event-grid/managed-service-identity) — Event Grid managed-identity delivery
+- [`09-downstream-azure`](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/09-downstream-azure/README.md) — per-agent identity and Azure RBAC in a chat-driven agent
