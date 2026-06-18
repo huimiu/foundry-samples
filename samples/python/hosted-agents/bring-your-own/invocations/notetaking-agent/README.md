@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Note-Taking Agent (Invocations Protocol)
 
 A Bring Your Own hosted note-taking agent using the [azure-ai-agentserver-invocations](https://pypi.org/project/azure-ai-agentserver-invocations/) SDK and the Foundry Responses API. It uses model function calling to save and retrieve per-session notes, then streams friendly responses as SSE.

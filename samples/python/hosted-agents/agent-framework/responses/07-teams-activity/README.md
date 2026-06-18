@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Teams Activity Agent (Responses Protocol)
 
 An [Agent Framework](https://github.com/microsoft/agent-framework) hosted agent for Microsoft Foundry using the **Responses protocol**. It can be deployed to Foundry, published to Teams and Microsoft 365, and optionally connected to Work IQ Teams and calendar tools through a Foundry Toolbox.

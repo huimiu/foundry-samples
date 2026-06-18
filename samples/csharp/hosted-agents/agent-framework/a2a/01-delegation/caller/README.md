@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # A2A Caller Agent (Responses Protocol)
 
 A friendly concierge agent hosted on Microsoft Foundry using the [Agent Framework](https://github.com/microsoft/agent-framework) and the **Responses protocol**. It answers directly when it can and delegates specialist math questions to the companion [A2A executor](../executor/) through a Foundry Toolbox `a2a_preview` tool.

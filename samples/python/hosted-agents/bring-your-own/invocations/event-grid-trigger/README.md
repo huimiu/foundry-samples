@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Event Grid Blob Trigger Agent (Invocations Protocol)
 
 A Bring Your Own hosted agent that receives Azure Storage BlobCreated events through the Microsoft Foundry **Invocations protocol**. Event Grid posts directly to the agent with managed identity authentication; the agent downloads the new blob, summarizes it with a Foundry model, and writes a summary JSON file to a separate container.

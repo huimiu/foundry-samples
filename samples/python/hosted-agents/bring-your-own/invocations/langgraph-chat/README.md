@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # LangGraph Chat Agent (Invocations Protocol)
 
 A multi-turn conversational Bring Your Own hosted agent built with [LangGraph](https://langchain-ai.github.io/langgraph/) and Azure OpenAI. It exposes the Microsoft Foundry **Invocations protocol**, routes tool calls through a LangGraph agent graph, and streams the final answer as SSE.

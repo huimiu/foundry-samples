@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Claude Agent SDK Agent (Invocations Protocol)
 
 A getting-started Bring Your Own hosted agent using the [Claude Agent SDK](https://pypi.org/project/claude-agent-sdk/) with Microsoft Foundry authentication and the [azure-ai-agentserver-invocations](https://pypi.org/project/azure-ai-agentserver-invocations/) protocol. It reads a plain-text prompt and streams Claude SDK messages as Server-Sent Events (SSE).

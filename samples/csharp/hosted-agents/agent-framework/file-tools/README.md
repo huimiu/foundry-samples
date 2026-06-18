@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # File Tools Agent (Responses Protocol)
 
 A hosted file-question-answering agent using the [Agent Framework](https://github.com/microsoft/agent-framework) and the **Responses protocol**. It demonstrates two security-scoped tool pairs: one for bundled files packaged with the image and one for per-session files uploaded by the user.

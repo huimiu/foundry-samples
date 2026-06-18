@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Azure AI Search RAG Agent (Responses Protocol)
 
 A Contoso Outdoors support agent hosted on Microsoft Foundry using the [Agent Framework](https://github.com/microsoft/agent-framework) and the **Responses protocol**. It grounds answers in a keyword-indexed Azure AI Search knowledge base through `TextSearchProvider` and `Azure.Search.Documents`.

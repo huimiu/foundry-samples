@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Echo Agent (Invocations Protocol)
 
 A minimal echo agent hosted on Microsoft Foundry using the **Invocations protocol** and the [Agent Framework](https://github.com/microsoft/agent-framework). It reads the request body, passes it through a custom `EchoAIAgent`, and writes the echoed text back. No LLM or Azure credentials are required — making it ideal for testing the hosting infrastructure in isolation.

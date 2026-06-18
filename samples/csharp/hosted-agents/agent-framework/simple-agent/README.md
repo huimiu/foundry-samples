@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Simple Agent (Responses Protocol)
 
 A general-purpose AI assistant — the simplest hosted agent using `AsAIAgent(model, instructions)` via the [Agent Framework](https://github.com/microsoft/agent-framework). Hosted on Microsoft Foundry with the **Responses protocol**, it is the recommended starting point for understanding inline agent creation in C#.

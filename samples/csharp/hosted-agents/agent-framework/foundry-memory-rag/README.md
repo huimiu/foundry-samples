@@ -1,5 +1,3 @@
-**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
-
 # Foundry Memory RAG Agent (Responses Protocol)
 
 A personal coach agent hosted on Microsoft Foundry using the [Agent Framework](https://github.com/microsoft/agent-framework), `FoundryMemoryProvider`, and the **Responses protocol**. It remembers training goals, dietary preferences, injuries, equipment, and scheduling constraints across requests by grounding responses in a Foundry Memory store.
