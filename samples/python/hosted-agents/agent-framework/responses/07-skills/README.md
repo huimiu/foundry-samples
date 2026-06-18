@@ -1,133 +1,230 @@
-# What this sample demonstrates
+**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent with **native file-based skills** hosted using the **Responses protocol**. It shows how to add a `SkillsProvider` to an agent so skills in a local `skills/` folder are discovered automatically and can use the same Azure credentials as the rest of the Foundry agent.
+# File-Based Skills Agent (Responses Protocol)
 
-The included `travel-guide` skill can create a colorful PDF city travel guide by running a bundled Python script. The script uses only the Python standard library so there is no extra PDF package to install.
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted on Microsoft Foundry using the **Responses protocol**. It demonstrates native file-based skills by loading a local `skills/` folder and running a trusted skill script to generate a PDF travel guide.
 
 ## How It Works
 
-### Model Integration
+1. `main.py` creates a `FoundryChatClient` pointed at your Foundry project endpoint and model deployment, authenticated with `DefaultAzureCredential`
+2. `run_local_skill_script()` validates that a requested script belongs to the file-based skill directory, runs it with the current Python interpreter, captures output, and enforces a 60-second timeout
+3. `SkillsProvider.from_paths(...)` loads skills from the local [skills](skills/) directory and uses the script runner for skill scripts
+4. The included [travel-guide](skills/travel-guide/) skill advertises `scripts/create_travel_guide.py`, which creates a colorful PDF using only the Python standard library
+5. The Agent Framework `Agent` receives the skills provider as a context provider and is served by `ResponsesHostServer`, which exposes an OpenAI-compatible `POST /responses` endpoint on `http://localhost:8088/`
 
-The agent uses `FoundryChatClient` from the Agent Framework to create a Responses client from the project endpoint and model deployment. The agent supports both streaming (SSE events) and non-streaming (JSON) response modes.
+See [main.py](main.py), [skills/travel-guide/SKILL.md](skills/travel-guide/SKILL.md), and [skills/travel-guide/scripts/create_travel_guide.py](skills/travel-guide/scripts/create_travel_guide.py) for the full implementation.
 
-See [main.py](main.py) for the full implementation.
+## Environment Variables
 
-### Skills
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4o`). Declared in `agent.yaml` |
 
-The sample creates a `SkillsProvider` pointed at the local [skills](skills/) directory:
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Authentication uses Managed Identity via `DefaultAzureCredential`.
 
-```python
-skills_provider = SkillsProvider(
-    skill_paths=Path(__file__).parent / "skills",
-    script_runner=run_local_skill_script,
-)
-```
-
-Agent Framework discovers the [travel-guide](skills/travel-guide/) skill from its `SKILL.md` file and advertises it to the model. When the user asks for a travel guide, the model can load the skill instructions and run `scripts/create_travel_guide.py` through the configured script runner.
-
-### Agent Hosting
-
-The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
-
-## Option 1: Azure Developer CLI (`azd`)
+## Running Locally
 
 ### Prerequisites
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
-2. Install the AI agent extension:
-   ```bash
-   azd ext install microsoft.foundry
-   ```
-3. Authenticate:
-   ```bash
-   azd auth login
-   ```
+- Python 3.10+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- Write access to `$HOME/generated-travel-guides`, where the included skill writes generated PDFs by default
 
-### Initialize the agent project
+### Using `azd` (Recommended)
 
-No cloning required. Create a new folder and initialize from the manifest:
+Create a local `.env` file from the sample template and fill in the required values:
 
 ```bash
-mkdir my-skills-agent && cd my-skills-agent
-
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/07-skills/agent.manifest.yaml
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
-
-### Provision Azure resources (if needed)
-
-If you don't already have a Foundry project and model deployment:
-
-```bash
-azd provision
-```
-
-### Run the agent locally
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
 ```
 
-The agent host will start on `http://localhost:8088`.
+The agent starts on `http://localhost:8088/`.
 
-### Invoke the local agent
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-In a separate terminal, from the project directory:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
 ```bash
 azd ai agent invoke --local "Create a colorful 3-day PDF travel guide for Lisbon focused on food, viewpoints, and neighborhoods."
 ```
 
-The skill writes the PDF to `$HOME/generated-travel-guides` and returns a file path. For production scenarios that need durable external sharing, update the skill script to upload the PDF to storage and return a shareable URL.
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "Create a colorful 3-day PDF travel guide for Lisbon focused on food, viewpoints, and neighborhoods."
+```
 
-### Deploy to Foundry
-
-Once tested locally, deploy to Microsoft Foundry:
+**Test with curl:**
 
 ```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Create a colorful 3-day PDF travel guide for Lisbon focused on food, viewpoints, and neighborhoods.", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the Responses protocol and displays the reply inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Adding Skills
+
+Any subdirectory under `skills/` containing a `SKILL.md` file can be loaded by `SkillsProvider`. The included `travel-guide` skill demonstrates this layout:
+
+```text
+skills/
+└── travel-guide/
+    ├── SKILL.md
+    └── scripts/
+        └── create_travel_guide.py
+```
+
+The `SKILL.md` file tells the model when to use the skill and which script arguments are supported. For the included travel guide generator, supported script flags are:
+
+- `--city <city>`: destination city, required
+- `--days <number>`: number of itinerary days, optional, defaults to `3`
+- `--interests <list>`: comma-separated interests such as `food,art,history,views`, optional
+- `--tone <style>`: guide style such as `family-friendly`, `luxury`, `budget`, or `first-time visitor`, optional
+
+Example script arguments advertised by the skill:
+
+```json
+["--city", "Lisbon", "--days", "3", "--interests", "food,viewpoints,neighborhoods", "--tone", "first-time visitor"]
+```
+
+The skill writes the PDF to `$HOME/generated-travel-guides` and returns a file path. For production scenarios that need durable external sharing, update the script to upload the PDF to storage and return a shareable URL.
+
+## Next Steps
+
+- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
+- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
 azd deploy
 ```
 
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+After deploying, invoke the agent running in Foundry:
 
-### Invoke the deployed agent
-
+**Bash:**
 ```bash
 azd ai agent invoke "Create a colorful 3-day PDF travel guide for Lisbon focused on food, viewpoints, and neighborhoods."
 ```
 
-## Option 2: VS Code (Foundry Toolkit)
+**PowerShell:**
+```powershell
+azd ai agent invoke "Create a colorful 3-day PDF travel guide for Lisbon focused on food, viewpoints, and neighborhoods."
+```
 
-### Prerequisites
+To stream logs from the running agent:
 
-1. **VS Code** with the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.azure-ai-foundry)** extension installed.
-2. Sign in to Azure in VS Code.
+```bash
+azd ai agent monitor
+```
 
-### Create the project
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create Hosted Agent**.
-2. Select this sample from the gallery. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically.
-3. Complete the **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one).
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-### Run and debug the agent
-
-Press **F5** to start the agent in debug mode. The agent host will start on `http://localhost:8088`.
-
-### Test with Agent Inspector
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-2. The Inspector connects to the running agent. Send messages to chat and view streamed responses.
-
-### Deploy to Foundry
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate settings.
-2. If prompted, complete **Foundry Project Setup** to select subscription and project.
-3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
-4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Next steps
+</details>
 
-- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
-- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.

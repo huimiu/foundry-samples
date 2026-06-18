@@ -1,121 +1,224 @@
-# Agent with Remote MCP Tools (Responses Protocol)
+**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent that connects to a **remote MCP server** (GitHub) for tool discovery, hosted on Microsoft Foundry using the **Responses protocol**. Instead of defining tools locally, the agent discovers and invokes tools at runtime from an MCP-compatible endpoint — in this case, the GitHub Copilot MCP server. This enables dynamic tool integration without redeployment.
+# Remote MCP Tools Agent (Responses Protocol)
 
-## How it works
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted on Microsoft Foundry using the **Responses protocol**. It demonstrates how to connect to a remote MCP server — the GitHub Copilot MCP endpoint — so tools can be discovered and invoked at runtime.
 
-The agent uses `FoundryChatClient` from the Agent Framework and is served via `ResponsesHostServer`. It registers a remote MCP tool pointing at `https://api.githubcopilot.com/mcp/`, authenticating with a GitHub PAT. When the model decides to call a tool, the framework forwards the call to the MCP server and returns the result to the model for the final reply. See [main.py](main.py) for the implementation.
+## How It Works
 
-## Option 1: Azure Developer CLI (`azd`)
+1. `main.py` creates a `FoundryChatClient` pointed at your Foundry project endpoint and model deployment, authenticated with `DefaultAzureCredential`
+2. The sample reads `GITHUB_PAT` and registers a remote MCP tool named `GitHub` with `client.get_mcp_tool(...)`, pointing at `https://api.githubcopilot.com/mcp/`
+3. The MCP tool sends the PAT as a bearer token and uses `approval_mode="never_require"` for tool calls
+4. The client is wrapped in an Agent Framework `Agent` with the remote MCP tool and a short system prompt (*"You are a friendly assistant. Keep your answers brief."*)
+5. The agent is served by `ResponsesHostServer`, which exposes an OpenAI-compatible `POST /responses` endpoint on `http://localhost:8088/`
+
+See [main.py](main.py) for the full implementation.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4o`). Declared in `agent.yaml` |
+| `GITHUB_PAT` | Yes | GitHub Personal Access Token used to authenticate to the GitHub Copilot MCP server. Declared in `agent.yaml` |
+
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME` and `GITHUB_PAT`. Authentication to Foundry uses Managed Identity via `DefaultAzureCredential`.
+
+## Running Locally
 
 ### Prerequisites
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
-2. Install the AI agent extension:
-   ```bash
-   azd ext install microsoft.foundry
-   ```
-3. Authenticate:
-   ```bash
-   azd auth login
-   ```
-4. **GitHub Personal Access Token (PAT)** — required for authenticating with the GitHub Copilot MCP server. [Create a PAT](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens).
+- Python 3.10+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- A GitHub Personal Access Token for authenticating with the GitHub Copilot MCP server
 
-### Initialize the agent project
+### Using `azd` (Recommended)
 
-No cloning required. Create a new folder and initialize from the manifest:
+Create a local `.env` file from the sample template and fill in the required values:
 
 ```bash
-mkdir my-mcp-agent && cd my-mcp-agent
-
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/03-mcp/agent.manifest.yaml
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
-
-### Provision Azure resources (if needed)
-
-If you don't already have a Foundry project and model deployment:
-
-```bash
-azd provision
-```
-
-### Set the GitHub PAT
-
-Add your GitHub PAT to the `.env` file:
-
-```
-GITHUB_PAT="ghp_your_token_here"
-```
-
-### Run the agent locally
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
 ```
 
-The agent host will start on `http://localhost:8088`.
+The agent starts on `http://localhost:8088/`.
 
-### Invoke the local agent
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-In a separate terminal, from the project directory:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
-azd ai agent invoke --local "List all the repositories I own on GitHub."
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
 ```
 
-### Deploy to Foundry
+The agent starts on `http://localhost:8088/`.
 
-Once tested locally, deploy to Microsoft Foundry:
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "List my GitHub repositories."
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "List my GitHub repositories."
+```
+
+**Test with curl:**
 
 ```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "List my GitHub repositories.", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the Responses protocol and displays the reply inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## MCP Configuration
+
+The agent connects to the GitHub Copilot MCP server at `https://api.githubcopilot.com/mcp/`. Set `GITHUB_PAT` in `.env` for local runs:
+
+```bash
+GITHUB_PAT="ghp_your_token_here"
+```
+
+If you plan to deploy with `azd`, also store the token in the azd environment so it can be injected into the hosted agent:
+
+```bash
+azd env set GITHUB_PAT="ghp_your_token_here"
+```
+
+The current code requires the `GITHUB_PAT` environment variable to exist. If it is present but empty, the agent logs a warning and runs without registering the GitHub MCP tool.
+
+## Next Steps
+
+- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
+- [Tool catalog](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/tool-catalog) — browse available tools to extend your agent
+- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
+- [Basic agent](../01-basic/) — minimal agent with no tools
+- [Add local tools](../02-tools/) — sample with locally defined Python tool functions
+- [Use Foundry Toolbox](../04-foundry-toolbox/) — sample with Azure Foundry Toolbox integration
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
 azd deploy
 ```
 
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+After deploying, invoke the agent running in Foundry:
 
-### Invoke the deployed agent
-
+**Bash:**
 ```bash
-azd ai agent invoke "List all the repositories I own on GitHub."
+azd ai agent invoke "List my GitHub repositories."
 ```
 
-## Option 2: VS Code (Foundry Toolkit)
+**PowerShell:**
+```powershell
+azd ai agent invoke "List my GitHub repositories."
+```
 
-### Prerequisites
+To stream logs from the running agent:
 
-1. **VS Code** with the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.azure-ai-foundry)** extension installed.
-2. Sign in to Azure in VS Code.
+```bash
+azd ai agent monitor
+```
 
-### Create the project
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create Hosted Agent**.
-2. Select this sample from the gallery. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically.
-3. Complete the **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one).
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-### Run and debug the agent
-
-Press **F5** to start the agent in debug mode. The agent host will start on `http://localhost:8088`.
-
-### Test with Agent Inspector
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-2. The Inspector connects to the running agent. Send messages to chat and view streamed responses.
-
-### Deploy to Foundry
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate settings.
-2. If prompted, complete **Foundry Project Setup** to select subscription and project.
-3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
-4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Next steps
+</details>
 
-- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
-- [Tool catalog](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/tool-catalog) — browse available tools to extend your agent (Bing Search, Azure AI Search, file search, code interpreter, and more)
-- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
-- [Basic agent](../01-basic/) — minimal agent with no tools
-- [Add local tools](../02-tools/) — sample with locally-defined Python tool functions
-- [Use Foundry Toolbox](../04-foundry-toolbox/) — sample with Azure Foundry Toolbox integration
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.
