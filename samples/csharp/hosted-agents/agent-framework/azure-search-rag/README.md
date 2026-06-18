@@ -1,166 +1,144 @@
-# What this sample demonstrates
+**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-A support specialist agent with Retrieval Augmented Generation (RAG) backed by **Azure AI Search**, the **Azure AI Search RAG Agent (Responses Protocol)** sample shows how to ground agent answers in a real keyword-indexed knowledge base using `TextSearchProvider` over `Azure.Search.Documents` via [Agent Framework](https://github.com/microsoft/agent-framework).
+# Azure AI Search RAG Agent (Responses Protocol)
+
+A Contoso Outdoors support agent hosted on Microsoft Foundry using the [Agent Framework](https://github.com/microsoft/agent-framework) and the **Responses protocol**. It grounds answers in a keyword-indexed Azure AI Search knowledge base through `TextSearchProvider` and `Azure.Search.Documents`.
 
 ## How It Works
 
-The agent uses a `TextSearchProvider` wired to an `Azure.Search.Documents.SearchClient`. Before each model invocation the framework runs a full-text search against the configured Azure AI Search index, retrieves the top three matching documents, injects them as context for the LLM, and the model composes an answer grounded in the retrieved information, reducing hallucination and ensuring responses reflect the actual product documentation.
-
-> [!IMPORTANT]
-> The agent assumes the search index already exists and is populated. It does **not** create or seed the index at runtime. See [Provisioning the search index](#provisioning-the-search-index) below for a one-time setup script that creates `contoso-outdoors` and seeds it with three Contoso Outdoors documents (return policy, shipping guide, tent care).
-
-> [!NOTE]
-> Provisioning of the Foundry project, model deployment, and the Azure AI Search service is handled by the [`azd-ai-starter-basic`](https://github.com/Azure-Samples/azd-ai-starter-basic) template, which `azd ai agent init` pulls in automatically. The chat model under `resources:` in `agent.manifest.yaml` flows into the starter's `AI_PROJECT_DEPLOYMENTS` parameter, and the `kind: tool` `id: azure_ai_search` entry flows into `AI_PROJECT_DEPENDENT_RESOURCES` to provision the Azure AI Search service plus a project-scoped connection.
-
-> [!IMPORTANT]
-> The starter's Azure AI Search bicep currently requires a co-provisioned storage account, but `azd ai agent init` does not auto-prompt for storage. After running `azd ai agent init`, manually edit the generated `azure.yaml` and add a `storage` entry to the agent's `resources:` array so both resources get provisioned together. See [Provisioning workaround](#provisioning-workaround-storage-dependency) below.
+1. `Program.cs` loads local `.env` values via `DotNetEnv`, then reads the Foundry project endpoint, chat deployment, Azure AI Search endpoint, and index name
+2. A `SearchClient` authenticates to Azure AI Search with `DefaultAzureCredential`; no search API key is used by the agent runtime
+3. `TextSearchProvider` is configured to search before each AI invocation and include up to three top results from the recent conversation context
+4. The search adapter runs full-text search, then maps each hit's `content`, `sourceName`, and `sourceLink` into `TextSearchResult` entries
+5. `.AsAIAgent(new ChatClientAgentOptions { ... AIContextProviders = [...] })` creates a support assistant instructed to cite source documents when available
+6. `AgentHost.CreateBuilder(args)` plus `AddFoundryResponses(agent)` and `MapFoundryResponses()` host the agent behind `POST /responses`
+7. The agent starts on `http://localhost:8088/`
 
 See [Program.cs](Program.cs) for the full implementation.
 
-## Running the Agent Locally
-
-### Prerequisites
-
-Before running this sample, ensure you have:
-
-1. **Azure Developer CLI (`azd`)** (recommended)
-   - [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later) and the unified Foundry CLI extension: `azd ext install microsoft.foundry`
-   - Authenticated: `azd auth login`
-
-2. **Azure CLI**
-   - Installed and authenticated: `az login`
-
-3. **.NET 10.0 SDK or later**
-   - Verify your version: `dotnet --version`
-   - Download from [https://dotnet.microsoft.com/download](https://dotnet.microsoft.com/download)
-
-> [!NOTE]
-> You do **not** need an existing [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry?view=foundry) project, model deployment, or Azure AI Search service to get started, `azd provision` creates them all for you. If you already have some of these, see the [note below](#using-azd-recommended-for-cli-workflows) on how to target them.
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint. Auto-injected in hosted containers; set automatically by `azd ai agent run` locally. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Chat model deployment name. Declared in `agent.manifest.yaml`. |
-| `AZURE_SEARCH_ENDPOINT` | Yes | Azure AI Search service endpoint. Derived from `AZURE_AI_SEARCH_SERVICE_NAME` (auto-injected by the starter) via the binding in `agent.yaml`. Set manually only when running without `azd`. |
-| `AZURE_SEARCH_INDEX_NAME` | Yes | Search index name. Defaults to `contoso-outdoors`. **Must exist before the agent starts** (see [Provisioning the search index](#provisioning-the-search-index)). |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Recommended | Enables telemetry. Auto-injected in hosted containers; set manually for local dev. |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | No | Chat model deployment name. Defaults to `gpt-4.1-mini`. Declared in `agent.yaml` and `agent.manifest.yaml` |
+| `AZURE_SEARCH_ENDPOINT` | Yes | Azure AI Search service endpoint. `agent.yaml` derives it from `AZURE_AI_SEARCH_SERVICE_NAME` when provisioned by `azd` |
+| `AZURE_SEARCH_INDEX_NAME` | No | Search index name. Defaults to `contoso-outdoors`; the index must already exist before the agent starts |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Enables telemetry. Auto-injected in hosted containers; set manually for local development |
 
-**Local development (without `azd`):**
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` and Application Insights are auto-injected by the platform. Authentication uses Managed Identity via `DefaultAzureCredential`. Locally, the sample loads a `.env` file via `DotNetEnv` if present.
 
-```bash
-# Set env vars directly. .NET does not natively read .env files.
-export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-chat-deployment-name>"
-export AZURE_SEARCH_ENDPOINT="https://<search-service>.search.windows.net"
-export AZURE_SEARCH_INDEX_NAME="contoso-outdoors"
-```
+## Running Locally
 
-> [!NOTE]
-> When using `azd ai agent run`, environment variables are handled automatically. No manual setup needed.
+### Prerequisites
 
-### Installing Dependencies
+- .NET 10.0 SDK or later (`dotnet --version`)
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- An Azure AI Search service with an existing `contoso-outdoors` index, Entra ID authentication enabled, and data-plane RBAC for the user or managed identity that queries it
 
-> [!NOTE]
-> If using `azd ai agent run`, dependencies are restored automatically. Skip to [Running the Sample](#running-the-sample).
+### Using `azd` (Recommended)
 
-Dependencies are restored automatically when building the project:
+Start the agent locally with the `run` command — `azd` restores dependencies, sets environment variables, builds, and starts the agent:
 
 ```bash
-dotnet restore
-```
-
-### Running the Sample
-
-The recommended way to run and test hosted agents locally is with the Azure Developer CLI (`azd`) or the Foundry Toolkit VS Code extension.
-
-#### Using the Foundry Toolkit VS Code Extension
-
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
-
-Chat with a running agent using the **Agent Inspector**:
-
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
-
-#### Using [`azd`](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd) (recommended for CLI workflows)
-
-No cloning required. Create a new folder, point `azd` at the manifest on GitHub, and it sets up the sample, generates Bicep infrastructure, `agent.yaml`, and env config:
-
-```bash
-# Create a new folder for the agent and navigate into it
-mkdir azure-search-rag-agent && cd azure-search-rag-agent
-
-# Initialize from the manifest. azd reads it, downloads the sample,
-# and generates Bicep infrastructure, agent.yaml, and env config
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/csharp/hosted-agents/agent-framework/azure-search-rag/agent.manifest.yaml
-
-# IMPORTANT: apply the storage workaround documented below before provisioning.
-
-# Provision Azure resources (Foundry project, model deployment, Azure AI Search, storage, App Insights)
-azd provision
-
-# Run the agent locally (handles env vars, build, and startup)
 azd ai agent run
 ```
 
-##### Provisioning workaround: storage dependency
+The agent starts on `http://localhost:8088/`.
 
-The starter's Azure AI Search bicep module currently requires a co-provisioned storage account, but `azd ai agent init` only auto-prompts for `azure_ai_search` and `bing_grounding` tool resources. After running `init`, open the generated `azure.yaml` and add a `storage` entry to the agent service's `resources:` array so both resources get provisioned together:
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-```yaml
-services:
-  azure-search-rag:
-    config:
-      resources:
-        - resource: azure_ai_search
-          connectionName: search
-        - resource: storage
-          connectionName: storage
-```
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-Tracking issue: [Azure-Samples/azd-ai-starter-basic — make storage optional in azure_ai_search.bicep or auto-prompt](https://github.com/Azure-Samples/azd-ai-starter-basic/issues).
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Restore dependencies:
+   ```bash
+   dotnet restore
+   ```
+4. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
 
-> [!NOTE]
-> If you've already cloned this repository, pass a local path to the manifest instead:
-> `azd ai agent init -m <path-to-repo>/samples/csharp/hosted-agents/agent-framework/azure-search-rag/agent.manifest.yaml`
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
-> [!NOTE]
-> If you already have a Foundry project, model deployment, and Azure AI Search service, add `-p <project-id> -d <deployment-name>` to `azd ai agent init` to target existing resources. You can also skip provisioning entirely and configure env vars manually, see [Without `azd`](#without-azd).
-
-The agent starts on `http://localhost:8088/`. To invoke it:
-
-```bash
-azd ai agent invoke --local "What is your return policy?"
-```
-
-Or use curl directly:
-
-```bash
-curl -sS -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "What is your return policy?", "stream": false}' | jq .
-
-curl -sS -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "How long does shipping take?", "stream": false}' | jq .
-
-curl -sS -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "How do I clean my tent?", "stream": false}' | jq .
-```
-
-#### Without `azd`
-
-If running without `azd`, set environment variables manually (see [Environment Variables](#environment-variables)), then:
+Set the environment variables from [Environment Variables](#environment-variables) (or place them in a `.env` file, which the sample loads via `DotNetEnv`), then:
 
 ```bash
 dotnet run
 ```
 
-### Deploying the Agent to Microsoft Foundry
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "What is your return policy?"
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "What is your return policy?"
+```
+
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "What is your return policy?", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the Responses protocol and displays the reply inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Provisioning the Search Index
+
+The agent expects the search index to exist and be populated before startup. `Program.cs` does not create or seed the index at runtime.
+
+Required fields for the default `contoso-outdoors` index:
+
+| Field | Type | Attributes |
+|-------|------|------------|
+| `id` | `Edm.String` | key, filterable |
+| `content` | `Edm.String` | searchable |
+| `sourceName` | `Edm.String` | filterable |
+| `sourceLink` | `Edm.String` | none |
+
+The sample content used by the previous README included three Contoso Outdoors documents: return policy, shipping guide, and TrailRunner tent care instructions. Seed equivalent documents before invoking prompts such as "What is your return policy?" or "How do I clean my tent?".
+
+The script or user that creates and seeds the index needs `Search Index Data Contributor` on the search service. The hosted agent's managed identity needs `Search Index Data Reader` on the same scope. Subscription `Owner` or `Contributor` alone is not sufficient because Azure AI Search document APIs require data-plane roles.
+
+Azure AI Search must accept Entra ID tokens. If an older service is API-key-only, enable AAD/API-key auth before using `DefaultAzureCredential`:
+
+```bash
+az search service update -g <resource-group> -n <search-service> \
+  --auth-options aadOrApiKey --aad-auth-failure-mode http403
+```
+
+The `azd-ai-starter-basic` template provisions the Foundry project, chat model, Azure AI Search service, and project-scoped Search connection from the model/tool resources in `agent.manifest.yaml`. If your generated `azure.yaml` requires the starter's storage dependency, add a `storage` resource alongside `azure_ai_search` before `azd provision`.
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -174,7 +152,13 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
+azd ai agent invoke "What is your return policy?"
+```
+
+**PowerShell:**
+```powershell
 azd ai agent invoke "What is your return policy?"
 ```
 
@@ -186,9 +170,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-#### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -201,135 +186,7 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Provisioning the search index
-
-The agent reads from a pre-existing index. Provision it once, before the first run, with the script below. The script is idempotent: it skips creation if the index already exists, and skips seeding if the index already has documents.
-
-### Required schema
-
-| Field | Type | Attributes |
-|-------|------|------------|
-| `id` | `Edm.String` | key, filterable |
-| `content` | `Edm.String` | searchable |
-| `sourceName` | `Edm.String` | filterable |
-| `sourceLink` | `Edm.String` | (none) |
-
-### Required search service authentication mode
-
-The script and the agent runtime both authenticate to Azure AI Search via Entra ID (AAD) bearer tokens, **not** API keys. The search service must therefore have RBAC enabled. Services created before May 2024, or services explicitly provisioned with `disableLocalAuth=false` and `authOptions=null`, default to **API-key-only** auth and will return `403 Forbidden` to every AAD token regardless of RBAC role assignments.
-
-Verify the current auth mode:
-
-```bash
-az search service show -g <rg> -n <search-service> \
-  --query "{authOptions:authOptions, disableLocalAuth:disableLocalAuth}" -o json
-```
-
-The expected output is one of:
-
-```json
-{ "authOptions": { "aadOrApiKey": { "aadAuthFailureMode": "http403" } }, "disableLocalAuth": false }
-```
-
-or, for AAD-only:
-
-```json
-{ "authOptions": null, "disableLocalAuth": true }
-```
-
-If you see `"authOptions": null` together with `"disableLocalAuth": false`, RBAC is **off** and you must enable it before the script (or the agent) can authenticate. Flip the service to accept both AAD and API keys (safest, no breaking change for existing key consumers):
-
-```bash
-az search service update -g <rg> -n <search-service> \
-  --auth-options aadOrApiKey --aad-auth-failure-mode http403
-```
-
-Or go AAD-only (rejects all API keys):
-
-```bash
-az search service update -g <rg> -n <search-service> --disable-local-auth true
-```
-
-Either change takes effect immediately on the control plane; allow ~1 minute for the data plane to pick it up.
-
-### Required RBAC for the user running the script
-
-Grant your user `Search Index Data Contributor` on the search service scope. This single role covers both index management (create) and document write (upload) for the bootstrap.
-
-> [!IMPORTANT]
-> Subscription `Owner`, `Contributor`, or `User Access Administrator` are **not sufficient on their own**. Those roles cover the management plane (deploy/scale/grant) but contain no `dataActions`, so REST calls to `/indexes/...` return `403`. The data-plane Search role must be granted explicitly even for subscription Owners.
-
-```bash
-SEARCH_ID=$(az search service show -g <rg> -n <search-service> --query id -o tsv)
-USER_OID=$(az ad signed-in-user show --query id -o tsv)
-az role assignment create --assignee-object-id $USER_OID --assignee-principal-type User \
-  --role "Search Index Data Contributor" --scope $SEARCH_ID
-```
-
-### Bash one-shot using `curl` + `az` token
-
-```bash
-SEARCH_ENDPOINT="https://<search-service>.search.windows.net"
-INDEX_NAME="contoso-outdoors"
-TOKEN=$(az account get-access-token --resource https://search.azure.com --query accessToken -o tsv)
-
-# Create the index (idempotent: 201 on create, 204 on update)
-curl -sS -X PUT "${SEARCH_ENDPOINT}/indexes/${INDEX_NAME}?api-version=2024-07-01" \
-  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d '{
-    "name": "'"${INDEX_NAME}"'",
-    "fields": [
-      { "name": "id", "type": "Edm.String", "key": true, "filterable": true },
-      { "name": "content", "type": "Edm.String", "searchable": true },
-      { "name": "sourceName", "type": "Edm.String", "filterable": true },
-      { "name": "sourceLink", "type": "Edm.String" }
-    ]
-  }'
-
-# Seed three Contoso Outdoors documents
-curl -sS -X POST "${SEARCH_ENDPOINT}/indexes/${INDEX_NAME}/docs/index?api-version=2024-07-01" \
-  -H "Authorization: Bearer ${TOKEN}" -H "Content-Type: application/json" -d '{
-    "value": [
-      {
-        "@search.action": "mergeOrUpload",
-        "id": "return-policy",
-        "sourceName": "Contoso Outdoors Return Policy",
-        "sourceLink": "https://contoso.com/policies/returns",
-        "content": "Customers may return any item within 30 days of delivery. Items should be unused and include original packaging. Refunds are issued to the original payment method within 5 business days of inspection."
-      },
-      {
-        "@search.action": "mergeOrUpload",
-        "id": "shipping-guide",
-        "sourceName": "Contoso Outdoors Shipping Guide",
-        "sourceLink": "https://contoso.com/help/shipping",
-        "content": "Standard shipping is free on orders over $50 and typically arrives in 3-5 business days within the continental United States. Expedited options are available at checkout."
-      },
-      {
-        "@search.action": "mergeOrUpload",
-        "id": "tent-care",
-        "sourceName": "TrailRunner Tent Care Instructions",
-        "sourceLink": "https://contoso.com/manuals/trailrunner-tent",
-        "content": "Clean the tent fabric with lukewarm water and a non-detergent soap. Allow it to air dry completely before storage and avoid prolonged UV exposure to extend the lifespan of the waterproof coating."
-      }
-    ]
-  }'
-```
-
-### Required RBAC for the agent runtime
-
-The hosted agent runs under its own managed identity. Grant that identity `Search Index Data Reader` on the search service scope so it can query the index at runtime:
-
-```bash
-# Look up the agent MI principal id from the deployed agent version.
-TOK=$(az account get-access-token --resource https://ai.azure.com --query accessToken -o tsv)
-MI=$(curl -sS -H "Authorization: Bearer $TOK" \
-  "https://<account>.services.ai.azure.com/api/projects/<project>/agents/azure-search-rag?api-version=v1" \
-  | jq -r '.versions.latest.instance_identity.principal_id')
-
-az role assignment create --assignee-object-id $MI --assignee-principal-type ServicePrincipal \
-  --role "Search Index Data Reader" --scope $SEARCH_ID
-```
-
-Wait ~3 minutes for AAD propagation before invoking the agent.
+</details>
 
 ## Troubleshooting
 

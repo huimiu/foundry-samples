@@ -1,163 +1,137 @@
-# What this sample demonstrates
+**IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-A hosted agent that answers questions over **two distinct file knowledge sources** through scoped, security-hardened tools — the **Agent with File Tools (Responses Protocol)** sample built on the [Agent Framework](https://github.com/microsoft/agent-framework).
+# File Tools Agent (Responses Protocol)
 
-- **Bundled files** (image-baked, `/app/resources/`) — files the author packages with the agent at build time. Always available, identical to every session.
-- **Session files** (per-session `$HOME` volume, `/home/session/`) — files the user uploads at runtime via `azd ai agent files upload`. Live for the lifetime of the session.
+A hosted file-question-answering agent using the [Agent Framework](https://github.com/microsoft/agent-framework) and the **Responses protocol**. It demonstrates two security-scoped tool pairs: one for bundled files packaged with the image and one for per-session files uploaded by the user.
 
 ## How It Works
 
-The agent registers four C# functions as tools, one tool pair per source:
-
-| Tool | Source | Root inside container |
-|------|--------|------|
-| `ListBundledFiles` | Bundled (image-baked) | `/app/resources/` |
-| `ReadBundledFile` | Bundled (image-baked) | `/app/resources/` |
-| `ListSessionFiles` | Session-uploaded | `$HOME` (`/home/session/`) |
-| `ReadSessionFile` | Session-uploaded | `$HOME` (`/home/session/`) |
-
-Each `Read*` tool takes a `fileName` (no path components allowed) and enforces three layers of defence inside the implementation:
-
-1. **`Path.GetFileName(input)`** strips any directory parts from the model-supplied name. `"../../etc/passwd"` becomes `"passwd"`.
-2. **`Path.GetFullPath(Combine(root, name))`** canonicalises the path.
-3. **`fullPath.StartsWith(root + DirectorySeparatorChar)`** rejects anything that resolves outside the tool's root.
-
-Failures return a controlled `"File '<input>' not found in <scope>."` rather than throwing or exposing the canonical path. The model cannot read or list arbitrary container paths, even via indirect prompt injection in an uploaded file.
+1. `Program.cs` loads local `.env` values via `DotNetEnv`, reads the Foundry project endpoint, and uses `AZURE_AI_MODEL_DEPLOYMENT_NAME` or the `gpt-4.1-mini` default
+2. The bundled-files root comes from `BUNDLED_FILES_DIR` or `<process base dir>/resources`; `file-tools.csproj` copies [resources/](resources/) into the publish output
+3. The session-files root comes from `HOME` or `/home/session`; files uploaded with `azd ai agent files upload` land in that per-session location
+4. Four C# functions are registered as tools: `ListBundledFiles`, `ReadBundledFile`, `ListSessionFiles`, and `ReadSessionFile`
+5. `SafeRead` strips path components, canonicalizes paths, and checks that reads stay inside the selected root before returning file contents
+6. `AgentHost.CreateBuilder(args)` plus `AddFoundryResponses(agent)` and `MapFoundryResponses()` host the agent behind `POST /responses`
+7. The agent starts on `http://localhost:8088/`
 
 See [Program.cs](Program.cs) for the full implementation.
 
-## Running the Agent Locally
-
-### Prerequisites
-
-Before running this sample, ensure you have:
-
-1. **Azure Developer CLI (`azd`)** (recommended)
-   - [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later) and the unified Foundry CLI extension: `azd ext install microsoft.foundry`
-   - Authenticated: `azd auth login`
-
-2. **Azure CLI**
-   - Installed and authenticated: `az login`
-
-3. **.NET 10.0 SDK or later**
-   - Verify your version: `dotnet --version`
-   - Download from [https://dotnet.microsoft.com/download](https://dotnet.microsoft.com/download)
-
-> [!NOTE]
-> You do **not** need an existing [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry?view=foundry) project or model deployment to get started — `azd provision` creates them for you. If you already have a project, see the [note below](#using-azd-recommended-for-cli-workflows) on how to target it.
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint. Auto-injected in hosted containers; set automatically by `azd ai agent run` locally. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name — must match your Foundry project deployment. Declared in `agent.manifest.yaml`. |
-| `BUNDLED_FILES_DIR` | No | Override the bundled-files root the tools read from. Defaults to `<process base dir>/resources` (`/app/resources/` in container). |
-| `HOME` | No | The per-session sandbox volume root the session-files tools read from. Set by the Foundry platform; can be overridden for local testing. Defaults to `/home/session`. |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Recommended | Enables telemetry. Auto-injected in hosted containers; set manually for local dev. |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | No | Model deployment name. Defaults to `gpt-4.1-mini`. Declared in `agent.yaml` and `agent.manifest.yaml` |
+| `ASPNETCORE_URLS` | No | ASP.NET Core bind address. `.env.example` sets `http://+:8088` |
+| `ASPNETCORE_ENVIRONMENT` | No | ASP.NET Core environment. `.env.example` sets `Development` |
+| `BUNDLED_FILES_DIR` | No | Override the bundled-files root. Defaults to `<process base dir>/resources` |
+| `HOME` | No | Per-session uploaded-files root. Set by the Foundry platform; defaults to `/home/session` if absent |
 
-**Local development (without `azd`):**
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform. Authentication uses Managed Identity via `DefaultAzureCredential`. Locally, the sample loads a `.env` file via `DotNetEnv` if present.
 
-```bash
-# Set env vars directly — .NET does not natively read .env files
-export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
-```
+## Running Locally
 
-> [!NOTE]
-> When using `azd ai agent run`, environment variables are handled automatically — no manual setup needed.
+### Prerequisites
 
-### Installing Dependencies
+- .NET 10.0 SDK or later (`dotnet --version`)
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- Optional demo files from [resources/](resources/) and [example-upload/](example-upload/) if you want to exercise both file sources
 
-> [!NOTE]
-> If using `azd ai agent run`, dependencies are restored automatically — skip to [Running the Sample](#running-the-sample).
+### Using `azd` (Recommended)
 
-Dependencies are restored automatically when building the project:
+Start the agent locally with the `run` command — `azd` restores dependencies, sets environment variables, builds, and starts the agent:
 
 ```bash
-dotnet restore
-```
-
-### Running the Sample
-
-The recommended way to run and test hosted agents locally is with the Azure Developer CLI (`azd`) or the Foundry Toolkit VS Code extension.
-
-#### Using the Foundry Toolkit VS Code Extension
-
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
-
-Chat with a running agent using the **Agent Inspector**:
-
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
-
-#### Using [`azd`](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd) (recommended for CLI workflows)
-
-No cloning required. Create a new folder, point `azd` at the manifest on GitHub, and it sets up the sample and generates Bicep infrastructure, `agent.yaml`, and env config automatically:
-
-```bash
-# Create a new folder for the agent and navigate into it
-mkdir file-tools-agent && cd file-tools-agent
-
-# Initialize from the manifest — azd reads it, downloads the sample,
-# and generates Bicep infrastructure, agent.yaml, and env config
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/csharp/hosted-agents/agent-framework/file-tools/agent.manifest.yaml
-
-# Provision Azure resources (Foundry project, model deployment, App Insights)
-azd provision
-
-# Run the agent locally (handles env vars, build, and startup)
 azd ai agent run
 ```
 
-> [!NOTE]
-> If you've already cloned this repository, pass a local path to the manifest instead:
-> `azd ai agent init -m <path-to-repo>/samples/csharp/hosted-agents/agent-framework/file-tools/agent.manifest.yaml`
+The agent starts on `http://localhost:8088/`.
 
-> [!NOTE]
-> If you already have a Foundry project and model deployment, add `-p <project-id> -d <deployment-name>` to `azd ai agent init` to target existing resources. You can also skip provisioning entirely and configure env vars manually — see [Without `azd`](#without-azd).
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Restore dependencies:
+   ```bash
+   dotnet restore
+   ```
+4. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+Set the environment variables from [Environment Variables](#environment-variables) (or place them in a `.env` file, which the sample loads via `DotNetEnv`), then:
+
+```bash
+dotnet run
+```
 
 The agent starts on `http://localhost:8088/`.
 
-##### Try the bundled-files path
+</details>
 
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
 ```bash
-azd ai agent invoke --local "What is the headline total revenue in the contoso file?"
+azd ai agent invoke --local "What is the headline total revenue in the bundled Contoso report?"
 ```
 
-The agent calls `ListBundledFiles`, finds `contoso_q1_2026_report.txt`, calls `ReadBundledFile("contoso_q1_2026_report.txt")` (rooted at `/app/resources/`), and quotes the figure verbatim (`$1,482.6M`).
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "What is the headline total revenue in the bundled Contoso report?"
+```
 
-##### Try the session-files path
+**Test with curl:**
 
-Upload the included demo file to the same session, then ask about it. `azd ai agent files upload` auto-resolves the session-id from the last invocation:
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "What is the headline total revenue in the bundled Contoso report?", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the Responses protocol and displays the reply inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## File Sources and Uploads
+
+| Tool | Source | Default root |
+|------|--------|--------------|
+| `ListBundledFiles` / `ReadBundledFile` | Files shipped with the agent image | `<process base dir>/resources` (`/app/resources` in the container) |
+| `ListSessionFiles` / `ReadSessionFile` | Files uploaded by the user for the current session | `$HOME` (`/home/session` in hosted sessions) |
+
+The bundled demo report [resources/contoso_q1_2026_report.txt](resources/contoso_q1_2026_report.txt) contains fictional Contoso Q1 2026 figures, including total revenue of `$1,482.6M`. To test session files, upload the included notes file and then ask about it:
 
 ```bash
 azd ai agent files upload ./example-upload/user_notes.txt
 azd ai agent invoke --local "What magic token is in user_notes.txt?"
 ```
 
-The agent calls `ListSessionFiles`, finds `user_notes.txt`, calls `ReadSessionFile("user_notes.txt")` (rooted at `$HOME`), and quotes the token.
+The uploaded file contains `GREENFIELD-7421`, which lets you verify the session-file round trip.
 
-##### Try a traversal attempt (it should be refused)
+To add more bundled files, place them under [resources/](resources/). The project file copies `resources\**\*` to the build and publish output so they are available to the bundled-file tools.
 
-```bash
-azd ai agent invoke --local "Read the file at the path '../../../etc/passwd' from the bundled files."
-```
+## Deploying the Agent to Microsoft Foundry
 
-The agent's tool schema only accepts a `fileName` (no `path`), and the `Path.GetFileName` + `StartsWith(root)` defence in depth rejects anything that resolves outside the tool's root. The agent will refuse and explain that only the bundled files are available.
-
-#### Without `azd`
-
-If running without `azd`, set environment variables manually (see [Environment Variables](#environment-variables)), then:
-
-```bash
-dotnet run
-```
-
-You can then upload session files via raw HTTP if needed (see [`POST /agents/{name}/endpoint/sessions/{id}/files/content`](https://learn.microsoft.com/en-us/azure/foundry/agents/) in the Foundry SDK docs).
-
-### Deploying the Agent to Microsoft Foundry
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -171,10 +145,14 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
-azd ai agent invoke "What is the headline total revenue in the contoso file?"
-azd ai agent files upload ./example-upload/user_notes.txt
-azd ai agent invoke "What magic token is in user_notes.txt?"
+azd ai agent invoke "What is the headline total revenue in the bundled Contoso report?"
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke "What is the headline total revenue in the bundled Contoso report?"
 ```
 
 To stream logs from the running agent:
@@ -185,9 +163,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-#### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -200,9 +179,7 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Adding more bundled files
-
-Drop additional text files into [`resources/`](./resources/). The csproj `<Content Include="resources\**\*" CopyToOutputDirectory="PreserveNewest" />` rule picks them up on the next `dotnet build` / `docker build`.
+</details>
 
 ## Troubleshooting
 
