@@ -1,12 +1,135 @@
-# What this sample demonstrates
+# Human-in-the-Loop LangGraph Agent (Responses Protocol)
 
-A [LangGraph](https://langchain-ai.github.io/langgraph/) **human-in-the-loop** agent hosted on Foundry over the **Responses protocol** using [`langchain_azure_ai.agents.hosting`](https://github.com/langchain-ai/langchain-azure/tree/main/libs/azure-ai/langchain_azure_ai/agents/hosting). The agent drafts a proposal for the user's task, pauses for human review via [`langgraph.types.interrupt`](https://langchain-ai.github.io/langgraph/concepts/human_in_the_loop/), and supports three decisions — **approve**, **revise** (with feedback), or **reject** — surfaced to the client as the standard OpenAI `mcp_approval_request` output item plus a paired `function_call` channel for rich resume payloads.
+A [LangGraph](https://langchain-ai.github.io/langgraph/) human-in-the-loop agent hosted on Microsoft Foundry using the **Responses protocol**. It drafts a proposal, pauses with `langgraph.types.interrupt`, and supports approve, revise, or reject decisions over standard Responses output items.
 
 ## How It Works
 
-### Graph shape
+1. `main.py` loads local settings from `.env`, then builds a Foundry-backed `ChatOpenAI` model from `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` using `DefaultAzureCredential`.
+2. A typed LangGraph state tracks the public `messages` channel, the current `draft`, and a `revision_history` list.
+3. The `draft` node generates or revises a proposal using the original task and any prior feedback.
+4. The `await_approval` node calls `interrupt({"draft": state["draft"]})` so the Responses host can emit an approval request.
+5. Approvals append the final draft to `messages`, revision feedback loops back to `draft`, and rejections are returned by the host as `response.failed` with `code="interrupt_rejected"`.
+6. The graph is compiled with `InMemorySaver`, keyed by the Responses `conversation.id`, and hosted through `ResponsesHostServer` on `http://localhost:8088/`.
 
+See [main.py](main.py) for the full implementation.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4o`). Declared in `agent.yaml` |
+
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Authentication uses Managed Identity via `DefaultAzureCredential`.
+
+## Running Locally
+
+### Prerequisites
+
+- Python 3.12+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+
+### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 ```
+
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
+
+```bash
+azd ai agent run
+```
+
+The agent starts on `http://localhost:8088/`.
+
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "Draft a marketing email for our new AI product launch."
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "Draft a marketing email for our new AI product launch."
+```
+
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Draft a marketing email for our new AI product launch.", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Human-in-the-Loop Review Flow
+
+```text
 START → draft → await_approval ──approve──► END (emit final draft)
                        │
                        └──revise(feedback)──► draft (loop)
@@ -14,124 +137,81 @@ START → draft → await_approval ──approve──► END (emit final draft)
                        └──reject──► host returns response.failed (interrupt_rejected)
 ```
 
-The graph state declares three channels:
+The Responses host emits two paired output items for each pause, both keyed by the same interrupt ID:
 
-- **`messages`** — the channel the Responses host emits to the client. Only the **final approved draft** is appended to it.
-- **`draft`** — the current proposal text under review.
-- **`revision_history`** — list of `{draft, feedback}` pairs from prior revision rounds; each round seeds the next `draft` call with the rejected draft and the reviewer's feedback.
-
-Routing out of `await_approval` is done by returning a [`Command(goto=...)`](https://langchain-ai.github.io/langgraph/how-tos/command/) instead of static edges, so the same node can finalize, loop, or stay paused depending on the resume value.
-
-State is persisted by an `InMemorySaver` checkpointer keyed by the `conversation.id` from the Responses request, so follow-up requests continue the paused run. See [main.py](main.py) for the full implementation.
-
-> **Production note.** `InMemorySaver` keeps the checkpoint in process memory only — a container restart loses paused runs. Production HITL agents should swap in a durable checkpointer (Cosmos DB, Redis, or a Foundry-managed store).
-
-### Review decisions
-
-The Responses host emits two paired output items for each pause, both keyed by the same interrupt id:
-
-* an `mcp_approval_request` item (`server_label == "langgraph"`, `arguments` JSON contains `{"interrupt_id": "<id>", "value": {"draft": "<text>"}}`) — the OpenAI-standard approval channel, and
-* a `function_call` item with `name == "__hosted_agent_adapter_interrupt__"` — a parallel rich channel for callers that want to send arbitrary resume payloads via `function_call_output`.
+- `mcp_approval_request` with `server_label == "langgraph"` and `arguments` containing `{"interrupt_id": "<id>", "value": {"draft": "<text>"}}`.
+- `function_call` with `name == "__hosted_agent_adapter_interrupt__"` for callers that want to resume with a richer `function_call_output` payload.
 
 | Decision | Client sends | Resume value seen by `await_approval` | Outcome |
-|---|---|---|---|
-| **Approve** | `mcp_approval_response` with `approve: true` and `approval_request_id: "<id>"` | `{"draft": "<original draft>"}` (proposed dict echoed; no `feedback`) | Final draft appended to `messages`; turn ends with `response.completed`. |
-| **Reject** | `mcp_approval_response` with `approve: false` (optionally `reason: "<text>"`) | _(node never re-enters)_ | Host returns `response.failed` with `code="interrupt_rejected"`. Checkpoint preserved; client can retry. |
-| **Revise** | `function_call_output` with `call_id: "<id>"` and `output: '{"resume": {"feedback": "<text>"}}'` | `{"feedback": "<text>"}` | Graph loops back to `draft` with `revision_history` appended; a new draft is generated and re-paused for review. |
+|----------|--------------|----------------------------------------|---------|
+| Approve | `mcp_approval_response` with `approve: true` | The proposed draft dictionary is echoed back | Final draft is appended to `messages` and the response completes |
+| Reject | `mcp_approval_response` with `approve: false` | The node is not re-entered | Host returns `response.failed` with `code="interrupt_rejected"` |
+| Revise | `function_call_output` with `output: '{"resume": {"feedback": "<text>"}}'` | `{"feedback": "<text>"}` | Graph appends revision history, loops to `draft`, and pauses again |
 
-### Agent Hosting
-
-The compiled graph is hosted with `ResponsesHostServer`, which exposes the OpenAI-compatible Responses endpoint at `/responses` and handles conversation history, interrupt serialization, and streaming lifecycle events automatically.
-
-## Running the Agent Host
-
-Follow the instructions in the [Running the Agent Host Locally](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
-
-## Interacting with the agent
-
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md) for more details. Use this README for sample queries you can send to the agent.
-
-### Step 1 — Submit the task
-
-Send a POST request with a `conversation.id` so the checkpoint can be matched on subsequent requests:
+Submit the initial task with a stable conversation ID so later requests resume the paused checkpoint:
 
 ```bash
 curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"input": "Draft a marketing email for our new AI product launch.", "conversation": {"id": "demo-hitl-1"}}'
+  -H "Content-Type: application/json" \
+  -d '{"input": "Draft a marketing email for our new AI product launch.", "conversation": {"id": "demo-hitl-1"}}'
 ```
 
-```powershell
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"input": "Draft a marketing email for our new AI product launch.", "conversation": {"id": "demo-hitl-1"}}').Content
-```
-
-The response `output` will contain an `mcp_approval_request` whose `arguments` JSON describes the proposed draft:
-
-```json
-{"interrupt_id": "<id>", "value": {"draft": "Subject: ...\n\nHi ..."}}
-```
-
-Note the `id` field of the `mcp_approval_request` item — you will reference it as `approval_request_id` (or as the `call_id` of the paired `function_call`) in the next request.
-
-### Step 2 — Send a decision
-
-**Approve** — the host resumes the graph and emits the final draft:
+Approve the draft:
 
 ```bash
 curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "mcp_approval_response", "approval_request_id": "<id>", "approve": true}]}'
+  -H "Content-Type: application/json" \
+  -d '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "mcp_approval_response", "approval_request_id": "<id>", "approve": true}]}'
 ```
 
-```powershell
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "mcp_approval_response", "approval_request_id": "<id>", "approve": true}]}').Content
-```
-
-**Reject** — the turn ends with `response.failed` `code="interrupt_rejected"`; the pending interrupt remains in the checkpoint:
+Request a revision by targeting the paired `function_call` item:
 
 ```bash
 curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "mcp_approval_response", "approval_request_id": "<id>", "approve": false, "reason": "tone is too casual"}]}'
+  -H "Content-Type: application/json" \
+  -d '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "function_call_output", "call_id": "<id>", "output": "{\"resume\": {\"feedback\": \"Shorter and more energetic, add a clear call to action.\"}}"}]}'
 ```
 
-```powershell
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "mcp_approval_response", "approval_request_id": "<id>", "approve": false, "reason": "tone is too casual"}]}').Content
-```
+`InMemorySaver` keeps checkpoints in process memory only. For production, replace it with a durable checkpointer such as Cosmos DB, Redis, or another persistent store.
 
-**Revise** — target the paired `function_call` item (its `call_id` is the same interrupt id) and send the feedback:
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
 
 ```bash
-curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "function_call_output", "call_id": "<id>", "output": "{\"resume\": {\"feedback\": \"Shorter and more energetic, add a clear call to action.\"}}"}]}'
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
+azd deploy
 ```
 
+After deploying, invoke the agent running in Foundry:
+
+**Bash:**
+```bash
+azd ai agent invoke "Draft a marketing email for our new AI product launch."
+```
+
+**PowerShell:**
 ```powershell
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"conversation": {"id": "demo-hitl-1"}, "input": [{"type": "function_call_output", "call_id": "<id>", "output": "{\"resume\": {\"feedback\": \"Shorter and more energetic, add a clear call to action.\"}}"}]}').Content
+azd ai agent invoke "Draft a marketing email for our new AI product launch."
 ```
 
-The graph generates a new draft incorporating the feedback and pauses again with a fresh `mcp_approval_request` — repeat Step 2 until you approve or reject.
+To stream logs from the running agent:
 
-### Test in Agent Inspector
-
-Once the agent is running locally, open **Agent Inspector** in VS Code (Command Palette: **Foundry Toolkit: Open Agent Inspector**) to interactively send messages and view responses.
-
-Type the following message in Inspector:
-
-```
-Draft a marketing email for our new AI product launch.
+```bash
+azd ai agent monitor
 ```
 
-When the agent pauses with an approval request, the Inspector renders an interactive approval card. Approve, reject, or send revision feedback directly from there.
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-## Deploying the Agent to Foundry
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
-
-### Deploying with the Foundry Toolkit VS Code Extension
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -143,3 +223,21 @@ To host the agent on Foundry, follow the instructions in the [Deploying the Agen
    - Pick a **CPU and Memory** size.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+</details>
+
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.

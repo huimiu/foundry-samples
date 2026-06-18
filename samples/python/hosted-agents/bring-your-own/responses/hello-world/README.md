@@ -8,127 +8,114 @@ Third-party samples contained in this folder are subject to their own designated
 Microsoft has no responsibility to you or others with respect to any of these samples or any resulting output.
 <!-- End standard disclaimer -->
 
-# What this sample demonstrates
+# Hello World Agent (Responses Protocol)
 
-A minimal "hello world" hosted agent using the **Bring Your Own** approach with the **Responses protocol**. It shows how to use the [`azure-ai-agentserver-responses`](https://pypi.org/project/azure-ai-agentserver-responses/) SDK to host a custom agent that calls a Foundry model via the Responses API and returns the reply through the standard Responses protocol contract.
-
-This is the simplest possible BYO integration — the protocol SDK handles the HTTP endpoints, SSE lifecycle, health probes, and OpenTelemetry tracing. You supply the model call using the [Foundry SDK (`azure-ai-projects`)](https://pypi.org/project/azure-ai-projects/).
+A minimal Bring Your Own hosted agent built with [azure-ai-agentserver-responses](https://pypi.org/project/azure-ai-agentserver-responses/) and the Foundry SDK. It uses the **Responses protocol** to forward user input to a Foundry model and return a concise answer.
 
 ## How It Works
 
-### Model Integration
+1. [main.py](main.py) reads `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME`, then creates an `AIProjectClient` with `DefaultAzureCredential`.
+2. The app creates a `ResponsesAgentServerHost`, which exposes `POST /responses` and asks the hosting runtime for recent conversation history.
+3. The handler reads the request body `input` field with `context.get_input_text()` and defaults to `Hello!` when no input is provided.
+4. Current input and history are converted into Responses API message items, then sent to the configured Foundry model with the system prompt `You are a helpful AI assistant. Be concise and informative.`
+5. The handler returns a `TextResponse`; the SDK wraps it in the correct Responses protocol lifecycle events.
 
-The agent uses the Foundry SDK to create an OpenAI-compatible Responses client from the project endpoint. When a request arrives, the handler extracts the user's input text, calls the model via the Responses API, and returns the reply as a `TextResponse` — which the SDK automatically wraps in the correct SSE lifecycle events (`response.created` → `response.in_progress` → content events → `response.completed`).
-
-See [main.py](main.py) for the full implementation.
-
-### Agent Hosting
-
-The agent is hosted using the [Azure AI AgentServer Responses SDK](https://pypi.org/project/azure-ai-agentserver-responses/), which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
-
-### Agent Deployment
-
-The hosted agent can be developed and deployed to Microsoft Foundry using the [Azure Developer CLI](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd).
-
-## Running the Agent Locally
-
-### Prerequisites
-
-Before running this sample, ensure you have:
-
-1. **Azure Developer CLI (`azd`)** (recommended)
-   - [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later) and the unified Foundry CLI extension: `azd ext install microsoft.foundry`
-   - Authenticated: `azd auth login`
-
-2. **Azure CLI**
-   - Installed and authenticated: `az login`
-
-3. **Python 3.10 or higher**
-   - Verify your version: `python --version`
-
-> [!NOTE]
-> You do **not** need an existing [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry?view=foundry) project or model deployment to get started — `azd provision` creates them for you. If you already have a project, see the [note below](#using-azd-recommended-for-cli-workflows) on how to target it.
-
-### Environment Variables
-
-See [`.env.example`](.env.example) or `.env` for the full list of environment variables this sample uses.
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint. Auto-injected in hosted containers; set automatically by `azd ai agent run` locally. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name — must match your Foundry project deployment. Declared in `agent.manifest.yaml`. |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Recommended | Enables telemetry. Auto-injected in hosted containers; set manually for local dev. |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes, for local runs | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (for example, `gpt-4.1-mini`). Declared in `agent.yaml` and `agent.manifest.yaml` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Enables local telemetry. Auto-injected in hosted containers when monitoring is configured |
 
-**Local development (without `azd`):**
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform. Authentication uses Managed Identity via `DefaultAzureCredential`; locally, use `az login` or another supported credential source.
+
+## Running Locally
+
+### Prerequisites
+
+- Python 3.10+
+- Azure CLI installed and authenticated (`az login`) or another `DefaultAzureCredential` source
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+
+### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
 
 ```bash
-# Copy and fill in values, then source
 cp .env.example .env  # skip if .env already exists
-# Edit .env with your values
-source .env
+# Edit .env — see Environment Variables above
 ```
 
-> [!NOTE]
-> When using `azd ai agent run`, environment variables are handled automatically — no manual setup needed.
-
-### Installing Dependencies
-
-> [!NOTE]
-> If using `azd ai agent run`, dependencies are installed automatically — skip to [Running the Sample](#running-the-sample).
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-### Running the Sample
-
-The recommended way to run and test hosted agents locally is with the Azure Developer CLI (`azd`) or the Foundry Toolkit VS Code extension.
-
-#### Using the Foundry Toolkit VS Code Extension
-
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
-
-Chat with a running agent using the **Agent Inspector**:
-
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
-
-#### Using [`azd`](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd) (recommended for CLI workflows)
-
-No cloning required. Create a new folder, point `azd` at the manifest on GitHub, and it sets up the sample and generates Bicep infrastructure, `agent.yaml`, and env config automatically:
-
-```bash
-# Create a new folder for the agent and navigate into it
-mkdir hello-world-agent && cd hello-world-agent
-
-# Initialize from the manifest — azd reads it, downloads the sample,
-# and generates Bicep infrastructure, agent.yaml, and env config
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/bring-your-own/responses/hello-world/agent.manifest.yaml
-
-# Provision Azure resources (Foundry project, model deployment, App Insights)
-azd provision
-
-# Run the agent locally (handles env vars, Docker build, and startup)
 azd ai agent run
 ```
 
-> [!NOTE]
-> If you've already cloned this repository, pass a local path to the manifest instead:
-> `azd ai agent init -m <path-to-repo>/samples/python/hosted-agents/bring-your-own/responses/hello-world/agent.manifest.yaml`
+The agent starts on `http://localhost:8088/`.
 
-> [!NOTE]
-> If you already have a Foundry project and model deployment, add `-p <project-id> -d <deployment-name>` to `azd ai agent init` to target existing resources. You can also skip provisioning entirely and configure env vars manually — see [Without `azd`](#without-azd).
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-The agent starts on `http://localhost:8088/`. To invoke it:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
 ```bash
 azd ai agent invoke --local "What is Microsoft Foundry?"
 ```
 
-Or use curl directly:
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "What is Microsoft Foundry?"
+```
+
+**Test with curl:**
 
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
@@ -136,15 +123,32 @@ curl -sS -X POST http://localhost:8088/responses \
   -d '{"input": "What is Microsoft Foundry?", "stream": false}' | jq .
 ```
 
-#### Without `azd`
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
 
-If running without `azd`, set environment variables manually (see [Environment Variables](#environment-variables)), then:
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
 
-```bash
-python main.py
-```
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
 
-### Deploying the Agent to Microsoft Foundry
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## What to Customize
+
+This is the smallest BYO Responses sample in this folder. Start here when you want to replace only the model call while keeping the hosted agent protocol server unchanged.
+
+Common changes:
+
+- Edit `_SYSTEM_PROMPT` in [main.py](main.py) to change the assistant behavior.
+- Replace the `AIProjectClient` Responses API call with your own orchestration logic.
+- Keep the request body field as `input` and continue returning a `TextResponse` or Responses protocol event stream.
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -158,7 +162,13 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
+azd ai agent invoke "What is Microsoft Foundry?"
+```
+
+**PowerShell:**
+```powershell
 azd ai agent invoke "What is Microsoft Foundry?"
 ```
 
@@ -170,9 +180,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-#### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -185,6 +196,8 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
+</details>
+
 ## Troubleshooting
 
 ### Images built on Apple Silicon or other ARM64 machines do not work on our service
@@ -193,11 +206,9 @@ We **recommend deploying with `azd deploy`**, which uses ACR remote build and al
 
 If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 
-**Fix for local builds**
+**Fix for local builds:**
 
-Use this command to build the image locally:
-
-```shell
+```bash
 docker build --platform=linux/amd64 -t image .
 ```
 

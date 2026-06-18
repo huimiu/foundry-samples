@@ -1,104 +1,163 @@
-# Note-Taking Agent — Python (Responses Protocol)
+# Note-Taking Agent (Responses Protocol)
 
-A note-taking agent built with `azure-ai-agentserver-responses` and Azure OpenAI. Uses function calling to save and retrieve notes, with per-session JSONL persistence accessible via the Session Files API.
+A custom Python note-taking agent hosted on Microsoft Foundry using the **Responses protocol**. It uses the Foundry OpenAI Responses API with function calling to save and retrieve per-session notes from JSONL files.
 
-## Features
+## How It Works
 
-- **Save notes** — natural language commands like "save a note - buy groceries"
-- **Retrieve notes** — "show me my notes" returns all saved entries with timestamps
-- **Per-session isolation** — each session gets its own note file
-- **Streaming responses** — real-time SSE streaming via the Responses protocol
-- **Session Files API** — notes stored at `$HOME` are accessible via the platform file API
+1. [main.py](main.py) validates `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME`, then creates an `AIProjectClient` authenticated with `DefaultAzureCredential`
+2. The agent obtains a Foundry OpenAI client and defines two function tools: `save_note` and `get_notes`
+3. `ResponsesAgentServerHost` exposes an OpenAI-compatible `POST /responses` endpoint on `http://localhost:8088/`
+4. The handler reads the request `input` and optional `agent_session_id`, asks the model whether a tool call is needed, executes tool calls locally, and streams the final model response
+5. [note_store.py](note_store.py) stores notes in thread-safe `notes_<session>.jsonl` files under `$HOME` when available, or the current working directory otherwise
 
-## Prerequisites
-
-- Python 3.12+
-- Azure OpenAI resource with a deployed model (e.g., `gpt-4.1-mini`)
-- Azure credentials configured (e.g., `az login`)
+See [main.py](main.py) and [note_store.py](note_store.py) for the full implementation.
 
 ## Environment Variables
 
-| Variable | Description | Example |
-|---|---|---|
-| `FOUNDRY_PROJECT_ENDPOINT` | Foundry project endpoint URL | `https://your-project.services.ai.azure.com/api/projects/your-project` |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Model deployment name declared in `agent.manifest.yaml` | `gpt-4.1-mini` |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4o`). Declared in `agent.yaml` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Optional | Application Insights connection string for local telemetry. Hosted containers may inject it |
 
-## Run Locally
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Authentication uses Managed Identity via `DefaultAzureCredential`.
+
+## Running Locally
+
+### Prerequisites
+
+- Python 3.12+
+- An Azure AI Foundry project with a model deployment
+- Azure credentials available to `DefaultAzureCredential` (for example, run `az login`)
 
 ### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+```
+
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
 ```
 
-### Using the Foundry Toolkit VS Code Extension
+The agent starts on `http://localhost:8088/`.
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-Chat with a running agent using the **Agent Inspector**:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
 
-### Without `azd`
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
-# Copy and edit environment file
-cp .env.example .env  # skip if .env already exists
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Start the agent
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 python main.py
 ```
 
-## Test with azd
+The agent starts on `http://localhost:8088/`.
 
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
 ```bash
 azd ai agent invoke --local "save a note - book reservation for dinner"
 ```
 
-## Test with curl
-
-### Save a note
-
-```bash
-curl -N -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{
-    "input": "save a note - book reservation for dinner",
-    "stream": true,
-    "agent_session_id": "my-session"
-  }'
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "save a note - book reservation for dinner"
 ```
 
-### Save another note
+**Test with curl:**
 
 ```bash
-curl -N -X POST http://localhost:8088/responses \
+curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
-  -d '{
-    "input": "save a note - buy groceries for the weekend",
-    "stream": true,
-    "agent_session_id": "my-session"
-  }'
+  -d '{"input": "save a note - book reservation for dinner", "stream": false}' | jq .
 ```
 
-### Get all notes
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Note Storage and Session Behavior
+
+Use `agent_session_id` to isolate notes between conversations. If no session ID is supplied, the agent uses `default`.
 
 ```bash
+# Save a note in a named session
 curl -N -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
-  -d '{
-    "input": "show me all my notes",
-    "stream": true,
-    "agent_session_id": "my-session"
-  }'
+  -d '{"input": "save a note - buy groceries for the weekend", "stream": true, "agent_session_id": "my-session"}'
+
+# Retrieve notes from the same session
+curl -N -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "show me all my notes", "stream": true, "agent_session_id": "my-session"}'
 ```
+
+Notes are appended as JSON lines with UTC timestamps. Session IDs are sanitized for file names, so `my-session` stores data in `notes_my-session.jsonl`.
+
+## Files
+
+| File | Purpose |
+|------|---------|
+| `main.py` | Responses handler, Foundry OpenAI client setup, and function-calling loop |
+| `note_store.py` | Thread-safe per-session JSONL note persistence |
+| `agent.yaml` | Hosted agent configuration with the Responses protocol |
+| `requirements.txt` | Python dependencies |
 
 ## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -112,7 +171,13 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
+azd ai agent invoke "save a note - book reservation for dinner"
+```
+
+**PowerShell:**
+```powershell
 azd ai agent invoke "save a note - book reservation for dinner"
 ```
 
@@ -124,9 +189,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -139,17 +205,7 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## File Structure
-
-| File | Description |
-|---|---|
-| `main.py` | Agent entry point with Responses handler and OpenAI function calling |
-| `note_store.py` | Thread-safe per-session JSONL note persistence |
-| `requirements.txt` | Python dependencies |
-| `Dockerfile` | Container image definition |
-| `agent.yaml` | Agent hosting configuration |
-| `agent.manifest.yaml` | Agent metadata and template |
-| `.dockerignore` | Docker build exclusions |
+</details>
 
 ## Troubleshooting
 
@@ -166,3 +222,11 @@ docker build --platform=linux/amd64 -t image .
 ```
 
 This forces the image to be built for the required `amd64` architecture.
+
+### Notes do not appear in a follow-up request
+
+Use the same `agent_session_id` for save and retrieve requests. Without an explicit session ID, all notes are stored in the `default` session.
+
+### Local note files are hard to find
+
+The note store writes under `$HOME` when that environment variable exists. If `$HOME` is not set, it writes to the current working directory where `python main.py` runs.

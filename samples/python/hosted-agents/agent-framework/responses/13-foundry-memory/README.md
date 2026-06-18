@@ -1,45 +1,142 @@
-# What this sample demonstrates
+# Foundry Memory Agent (Responses Protocol)
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent with persistent semantic memory backed by an **Azure AI Foundry Memory Store**, hosted using the **Responses protocol**. The agent remembers facts the user has shared (e.g., dietary preferences, name) across sessions by retrieving and updating memories around every model invocation via `FoundryMemoryProvider`.
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent with persistent semantic memory backed by an Azure AI Foundry Memory Store, hosted using the **Responses protocol**. It retrieves and updates user-profile memories around model calls so the otherwise stateless hosted agent can remember stable facts across sessions.
 
 ## How It Works
 
-### Model Integration
+1. `main.py` creates a `FoundryChatClient` with `allow_preview=True` so its underlying `AIProjectClient` can call preview Foundry Memory APIs
+2. `_resolved_env()` treats missing or unsubstituted `MEMORY_STORE_NAME` placeholders as empty so the agent can still start without memory in smoke-test environments
+3. When `MEMORY_STORE_NAME` is set, `FoundryMemoryProvider` is created with `project_client=client.project_client`, reusing the chat client's authentication context and connection pool
+4. The memory provider scopes memories by hosted-agent user id using `{{$userId}}`, retrieves user-profile and contextual memories, and updates the store with new facts from the conversation
+5. The agent is instructed to use relevant memories and acknowledge when it relies on remembered facts
+6. `ResponsesHostServer` exposes the agent through an OpenAI-compatible `POST /responses` endpoint and starts on `http://localhost:8088/`
 
-The agent uses `FoundryChatClient` from the Agent Framework to create a Responses client from the project endpoint and model deployment. `allow_preview=True` is passed so the same `AIProjectClient` can also call the preview `beta.memory_stores` API.
+See [main.py](main.py) and [provision_memory_store.py](provision_memory_store.py) for the full implementation.
 
-### Memory via Foundry Memory Store
+## Environment Variables
 
-`FoundryMemoryProvider` is wired into the agent as a context provider. Around each model invocation it:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Chat model deployment name (e.g. `gpt-4.1-mini`). Declared in `agent.yaml` |
+| `AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME` | For provisioning | Embedding model deployment used by `provision_memory_store.py`; not read by `main.py` at runtime |
+| `MEMORY_STORE_NAME` | Yes, for memory | Foundry Memory Store name that the agent reads and writes |
 
-1. **Retrieves user-profile memories** for the configured `scope` (e.g., user id) on the first turn of a session.
-2. **Searches for contextual memories** matching the current user message and injects them into the model context.
-3. **Updates the store** with new facts inferred from the conversation.
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform. `MEMORY_STORE_NAME` is declared in `agent.yaml` and should be set in your `azd` environment before deployment. Authentication uses Managed Identity via `DefaultAzureCredential`.
 
-Crucially, the provider is constructed with `project_client=client.project_client` — i.e. it reuses the `AIProjectClient` that `FoundryChatClient` already created, instead of allocating a second one. This keeps a single authentication context and connection pool for both chat and memory operations.
+## Running Locally
 
-See [main.py](main.py) for the full implementation.
+### Prerequisites
 
-### Agent Hosting
+- Python 3.10+
+- An Azure AI Foundry project with a chat model deployment (or let `azd provision` create one)
+- An embedding model deployment used to provision the Foundry Memory Store
+- **Azure AI User** on the Foundry project for the identity provisioning and using the memory store
+- A Foundry Memory Store created with [provision_memory_store.py](provision_memory_store.py)
 
-The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with the `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
+### Using `azd` (Recommended)
 
-## Prerequisites
+Create a local `.env` file from the sample template and fill in the required values:
 
-- An Azure AI Foundry project with:
-  - A deployed chat model (e.g., `gpt-4.1-mini`)
-  - A deployed embedding model (e.g., `text-embedding-3-small`) — used by the memory store itself, not by the agent at runtime
-- Azure CLI logged in (`az login`)
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+```
 
-### Required RBAC
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
-Your identity (or the Managed Identity running the container in production) needs **Azure AI User** on the Foundry project scope. This single role covers both provisioning the memory store with `provision_memory_store.py` and reading/writing memories from `main.py`.
+```bash
+azd ai agent run
+```
 
-## Provisioning the memory store (one time)
+The agent starts on `http://localhost:8088/`.
 
-[`provision_memory_store.py`](provision_memory_store.py) creates a Foundry Memory Store with the user-profile capability enabled (and chat-summary disabled) using `AIProjectClient.beta.memory_stores.create`. It is safe to re-run: if a store with the same name already exists, the script leaves it alone.
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-From this directory, with the venv activated and `az login` done:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "Remember that I prefer aisle seats."
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "Remember that I prefer aisle seats."
+```
+
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Remember that I prefer aisle seats.", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Foundry Memory
+
+[`FoundryMemoryProvider`](main.py) uses the Foundry Memory Store named by `MEMORY_STORE_NAME`. The store itself is created once by [provision_memory_store.py](provision_memory_store.py) with user-profile memory enabled and chat-summary memory disabled.
+
+Provision the store:
 
 ```bash
 export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
@@ -49,7 +146,7 @@ export MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
 
-Or in PowerShell:
+PowerShell:
 
 ```powershell
 $env:FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
@@ -59,120 +156,94 @@ $env:MEMORY_STORE_NAME="agent_framework_memory"
 python provision_memory_store.py
 ```
 
-Expected output (first run):
+The embedding model is used by the memory store provisioning API. The running agent only reads `MEMORY_STORE_NAME` and the chat model deployment name.
 
-```text
-Creating memory store 'agent_framework_memory'...
-Created memory store 'agent_framework_memory' (id=memstore_...).
-```
+## Preparing Hosted Deployment Values
 
-> To delete the store manually, call `project.beta.memory_stores.delete("<name>")` on an `AIProjectClient` constructed with `allow_preview=True`.
-
-## Option 1: Azure Developer CLI (`azd`)
-
-### Prerequisites
-
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
-2. Install the AI agent extension:
-   ```bash
-   azd ext install microsoft.foundry
-   ```
-3. Authenticate:
-   ```bash
-   azd auth login
-   ```
-
-### Initialize the agent project
-
-No cloning required. Create a new folder and initialize from the manifest:
-
-```bash
-mkdir my-memory-agent && cd my-memory-agent
-
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/13-foundry-memory/agent.manifest.yaml
-```
-
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
-
-### Provision Azure resources (if needed)
-
-If you don't already have a Foundry project and model deployment:
-
-```bash
-azd provision
-```
-
-### Run the agent locally
-
-```bash
-azd ai agent run
-```
-
-The agent host will start on `http://localhost:8088`.
-
-### Invoke the local agent
-
-In a separate terminal, from the project directory:
-
-```bash
-azd ai agent invoke --local "Hi"
-```
-
-### Deploy to Foundry
-
-Once tested locally, deploy to Microsoft Foundry:
-
-Make sure `MEMORY_STORE_NAME` is set in your `azd` environment:
+Set the memory store name in your `azd` environment before deploying:
 
 ```bash
 azd env set MEMORY_STORE_NAME "agent_framework_memory"
 ```
 
+The hosted agent's managed identity needs **Azure AI User** on the Foundry project to read and write memories at runtime.
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
 ```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
 azd deploy
 ```
 
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+After deploying, invoke the agent running in Foundry:
 
-The deployed agent's Managed Identity needs **Azure AI User** on the Foundry project to read and write memories at runtime. Make sure you have run `provision_memory_store.py` against the same Foundry project before deploying.
-
-### Invoke the deployed agent
-
+**Bash:**
 ```bash
-azd ai agent invoke "Hi"
+azd ai agent invoke "Remember that I prefer aisle seats."
 ```
 
-## Option 2: VS Code (Foundry Toolkit)
+**PowerShell:**
+```powershell
+azd ai agent invoke "Remember that I prefer aisle seats."
+```
 
-### Prerequisites
+To stream logs from the running agent:
 
-1. **VS Code** with the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.azure-ai-foundry)** extension installed.
-2. Sign in to Azure in VS Code.
+```bash
+azd ai agent monitor
+```
 
-### Create the project
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create Hosted Agent**.
-2. Select this sample from the gallery. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically.
-3. Complete the **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one).
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-### Run and debug the agent
-
-Press **F5** to start the agent in debug mode. The agent host will start on `http://localhost:8088`.
-
-### Test with Agent Inspector
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-2. The Inspector connects to the running agent. Send messages to chat and view streamed responses.
-
-### Deploy to Foundry
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate settings.
-2. If prompted, complete **Foundry Project Setup** to select subscription and project.
-3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
-4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Next steps
+</details>
 
-- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
-- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.
+
+### The agent starts but does not remember anything
+
+Confirm `MEMORY_STORE_NAME` is set to an existing Foundry Memory Store. The code starts without memory when this value is empty or still contains an unresolved template placeholder.
+
+### Memory store provisioning fails
+
+Check that `AZURE_AI_MODEL_DEPLOYMENT_NAME`, `AZURE_AI_EMBEDDING_MODEL_DEPLOYMENT_NAME`, and `MEMORY_STORE_NAME` are set before running `provision_memory_store.py`.
+
+### Memory API calls fail with authorization errors
+
+Assign **Azure AI User** on the Foundry project to the local user or hosted agent managed identity.

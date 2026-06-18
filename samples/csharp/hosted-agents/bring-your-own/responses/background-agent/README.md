@@ -1,31 +1,40 @@
 **IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-# Background Agent (Responses Protocol) — .NET
+# Background Agent (Responses Protocol)
 
-This sample demonstrates a long-running agent built with [Azure.AI.AgentServer.Responses](https://www.nuget.org/packages/Azure.AI.AgentServer.Responses) that uses the background execution mode for asynchronous processing. It calls Azure OpenAI to generate a multi-section research analysis, streaming LLM tokens as they arrive via the Responses API event lifecycle.
+A bring-your-own hosted research agent in C# using the **Responses protocol** and `Azure.AI.AgentServer.Responses`. It demonstrates background execution for long-running model work while the SDK handles polling and cancellation.
 
 ## How It Works
 
-The agent receives a request via `POST /responses` with `"background": true`. The server returns immediately while the handler calls Azure OpenAI in the background, streaming response tokens as `text.delta` events. The caller polls `GET /responses/{id}` until the response reaches a terminal status (`completed`, `failed`, or `incomplete`). In-flight requests can be cancelled via `POST /responses/{id}/cancel`.
+1. `Program.cs` creates a Foundry `ProjectResponsesClient` and starts `ResponsesServer.Run<BackgroundResearchHandler>()` on `http://localhost:8088/`.
+2. The handler receives `POST /responses` requests and reads the user topic with `ResponseContext.GetInputTextAsync()`.
+3. For `background: true`, the Responses SDK returns immediately, runs the handler asynchronously, and exposes status through `GET /responses/{id}`.
+4. The handler asks the model for a multi-section research analysis and streams text deltas through `TextResponse`.
+5. In-flight background responses can be cancelled with `POST /responses/{id}/cancel`; synchronous requests are also supported.
 
-The handler itself stays simple — background mode, polling, and cancellation are all managed by the SDK automatically.
+See [Program.cs](Program.cs) for the full implementation.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes (local) | Azure AI Foundry project endpoint URL. Auto-injected when hosted and supplied by `azd ai agent run` locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name. Declared in `agent.yaml` / `agent.manifest.yaml` and must match a deployment in your Foundry project |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Optional | Enables telemetry. Auto-injected in hosted containers; set manually for local dev |
+
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` and `APPLICATIONINSIGHTS_CONNECTION_STRING` are auto-injected by the platform. Authentication uses Managed Identity via `DefaultAzureCredential`. Locally, set environment variables directly or use `azd ai agent run`.
 
 ## Running Locally
 
 ### Prerequisites
 
-- [.NET 10.0 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- Azure CLI installed and authenticated (`az login`)
-- An Azure AI Foundry project with an Azure OpenAI deployment
-
-### Environment Variables
-
-| Variable | Description |
-|---|---|
-| `FOUNDRY_PROJECT_ENDPOINT` | Azure AI Foundry project endpoint (auto-injected when deployed) |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Azure OpenAI model deployment name (e.g., `gpt-4.1-mini`) |
+- .NET 10.0 SDK or later (`dotnet --version`)
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- Azure authentication available to `DefaultAzureCredential` (for example, `az login`)
 
 ### Using `azd` (Recommended)
+
+Start the agent locally with the `run` command — `azd` restores dependencies, sets environment variables, builds, and starts the agent:
 
 ```bash
 azd ai agent run
@@ -33,64 +42,101 @@ azd ai agent run
 
 The agent starts on `http://localhost:8088/`.
 
-### Using the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-Chat with a running agent using the **Agent Inspector**:
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Restore dependencies:
+   ```bash
+   dotnet restore
+   ```
+4. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
 
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
-### Without `azd`
+Set the environment variables from [Environment Variables](#environment-variables) (.NET does not read `.env` files natively), then:
 
 ```bash
-export FOUNDRY_PROJECT_ENDPOINT="https://your-resource.services.ai.azure.com/api/projects/your-project"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
 dotnet run
 ```
 
 The agent starts on `http://localhost:8088/`.
 
-## Invoke with azd
+</details>
 
-### Local
+## Invoke
 
+### Using azd
+
+**Local:**
+
+**Bash:**
 ```bash
 azd ai agent invoke --local "Analyze the impact of AI on healthcare"
 ```
 
-### Remote (after `azd up`)
-
-```bash
-azd ai agent invoke "Analyze the impact of AI on healthcare"
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "Analyze the impact of AI on healthcare"
 ```
 
-### Test — Background Mode
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Analyze the impact of AI on healthcare", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Background Mode
+
+Submit a background request, poll for completion, or cancel in-flight work:
 
 ```bash
 # Submit a background research analysis
 curl -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
-  -d '{"model": "research", "input": "Analyze the impact of AI on healthcare", "background": true, "store": true}'
+  -d '{"input": "Analyze the impact of AI on healthcare", "background": true, "store": true}'
 
-# Poll for result (use the id from the response)
+# Poll for result using the id from the response
 curl http://localhost:8088/responses/<response_id>
 
 # Cancel an in-flight request
 curl -X POST http://localhost:8088/responses/<response_id>/cancel
 ```
 
-### Test — Default Mode (Synchronous)
+For a synchronous response, omit `background: true`.
 
-```bash
-curl -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"model": "research", "input": "Analyze the impact of AI on healthcare"}'
-```
+## Project Structure
+
+| File | Purpose |
+|------|---------|
+| `Program.cs` | Agent entry point and `ResponseHandler` implementation |
+| `background-agent.csproj` | .NET dependencies for the Responses protocol and Foundry SDK |
+| `agent.yaml` | Hosted container agent configuration using the Responses protocol |
+| `agent.manifest.yaml` | Foundry manifest with model resource and environment-variable mapping |
 
 ## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -104,7 +150,13 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
+azd ai agent invoke "Analyze the impact of AI on healthcare"
+```
+
+**PowerShell:**
+```powershell
 azd ai agent invoke "Analyze the impact of AI on healthcare"
 ```
 
@@ -116,9 +168,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -131,20 +184,7 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Project Structure
-
-```
-background-agent/
-├── Program.cs               # Agent entry point and handler implementation
-├── background-agent.csproj  # .NET project file with dependencies
-├── Dockerfile               # Container build definition
-├── agent.yaml               # Agent deployment configuration
-├── agent.manifest.yaml      # Agent manifest for Foundry
-├── .dockerignore            # Docker build exclusions
-├── .env.example or .env             # Example environment variables
-├── test-payload.txt         # Sample request payload for testing
-└── README.md                # This file
-```
+</details>
 
 ## Troubleshooting
 

@@ -1,10 +1,135 @@
-# Content safety guardrail (Responses protocol)
+# Content Safety Guardrail Agent (Responses Protocol)
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted on Microsoft Foundry using the **Responses protocol**, with a Responsible AI (RAI) **content safety guardrail** attached. The guardrail screens the prompts the agent receives and the responses it returns against an RAI policy, so harmful content is filtered according to your safety configuration.
+An [Agent Framework](https://github.com/microsoft/agent-framework) agent hosted on Microsoft Foundry using the **Responses protocol**, with a Responsible AI (RAI) content safety guardrail attached at the hosted-agent definition level. The Python code is intentionally close to the basic hosted agent; the guardrail behavior is configured in `agent.yaml` and applied by the platform.
 
-## How it works
+## How It Works
 
-The agent itself is the basic `FoundryChatClient` agent served via `ResponsesHostServer` — see [main.py](main.py). The guardrail is **not** code; it's a definition-level setting. The agent declares a `policies` list with a `rai_policy` entry that points to an RAI policy by its full Azure Resource Manager (ARM) resource ID:
+1. `main.py` creates a `FoundryChatClient` pointed at your Foundry project endpoint and model deployment, authenticated with `DefaultAzureCredential`
+2. The client is wrapped in an Agent Framework `Agent` with a short system prompt (*"You are a friendly assistant. Keep your answers brief."*)
+3. `agent.yaml` and `agent.manifest.yaml` declare a `policies` list with a `rai_policy` entry and a full ARM resource ID in `rai_policy_name`
+4. Microsoft Foundry applies the referenced RAI policy at runtime to screen prompts and responses according to your guardrail configuration
+5. `ResponsesHostServer` exposes the agent through an OpenAI-compatible `POST /responses` endpoint and starts on `http://localhost:8088/`
+
+See [main.py](main.py), [agent.yaml](agent.yaml), and [agent.manifest.yaml](agent.manifest.yaml) for the full implementation.
+
+## Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4.1-mini`). Declared in `agent.yaml` |
+
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Authentication uses Managed Identity via `DefaultAzureCredential`.
+
+## Running Locally
+
+### Prerequisites
+
+- Python 3.10+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- An RAI policy created on your Foundry resource, with its full ARM resource ID available for `rai_policy_name`
+
+### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+```
+
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
+
+```bash
+azd ai agent run
+```
+
+The agent starts on `http://localhost:8088/`.
+
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "Write a short friendly hello message."
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "Write a short friendly hello message."
+```
+
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Write a short friendly hello message.", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Content Safety
+
+Set `rai_policy_name` in both [agent.yaml](agent.yaml) and [agent.manifest.yaml](agent.manifest.yaml) to the full ARM resource ID of an RAI policy on your Foundry resource:
 
 ```yaml
 policies:
@@ -12,81 +137,9 @@ policies:
     rai_policy_name: /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<account>/raiPolicies/<policy-name>
 ```
 
-The platform applies that policy to the agent at runtime. When you omit the `policies` block, the agent deploys without a content safety guardrail. When you include the `policies` block but omit `rai_policy_name`, the platform applies the default policy, `Microsoft.DefaultV2`. For a conceptual overview, see [Add a content safety guardrail to a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-hosted-agent-guardrails).
+Use the full ARM resource ID, not the bare policy name. If you omit the `policies` block, the hosted agent deploys without a guardrail. If you keep the `policies` block but omit `rai_policy_name`, the platform applies the default policy, `Microsoft.DefaultV2`.
 
-## Prerequisites
-
-1. An RAI policy created on your Foundry resource, and its full ARM resource ID. To create one, see [Configure guardrails and controls](https://learn.microsoft.com/en-us/azure/foundry/guardrails/how-to-create-guardrails). The ARM resource ID has this form:
-
-   ```text
-   /subscriptions/<subscription-id>/resourceGroups/<resource-group>/providers/Microsoft.CognitiveServices/accounts/<account>/raiPolicies/<policy-name>
-   ```
-
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd), then install the AI agent extension and authenticate:
-
-   ```bash
-   azd ext install azure.ai.agents
-   azd auth login
-   ```
-
-## Configure the guardrail
-
-Set `rai_policy_name` to your RAI policy's full ARM resource ID in both [agent.yaml](agent.yaml) and [agent.manifest.yaml](agent.manifest.yaml). Use the full ARM resource ID, not the bare policy name.
-
-## Option 1: Azure Developer CLI (`azd`)
-
-### Initialize the agent project
-
-No cloning required. Create a new folder and initialize from the manifest:
-
-```bash
-mkdir my-guardrail-agent && cd my-guardrail-agent
-
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/16-content-safety-guardrail/agent.manifest.yaml
-```
-
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` guides you through creating one.
-
-> [!NOTE]
-> After init, confirm that `rai_policy_name` in the generated `agent.yaml` holds your policy's full ARM resource ID.
-
-### Provision Azure resources (if needed)
-
-If you don't already have a Foundry project and model deployment:
-
-```bash
-azd provision
-```
-
-> [!IMPORTANT]
-> If you provisioned a new Foundry project, it doesn't have your RAI policy yet. Before you deploy, [create an RAI policy](https://learn.microsoft.com/en-us/azure/foundry/guardrails/how-to-create-guardrails) on the provisioned account, then set `rai_policy_name` in the generated `agent.yaml` to that policy's full ARM resource ID. Deploying with a placeholder or nonexistent policy ID fails.
-
-### Deploy to Foundry
-
-```bash
-azd deploy
-```
-
-The platform applies the guardrail when it creates the agent version. For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
-
-### Invoke the deployed agent
-
-```bash
-azd ai agent invoke "Write a short friendly hello message."
-```
-
-## Option 2: VS Code (Foundry Toolkit)
-
-1. Install the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.azure-ai-foundry)** extension and sign in to Azure.
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create Hosted Agent**, then select this sample from the gallery. The extension scaffolds the project and generates `agent.yaml`.
-1. Set `rai_policy_name` in the generated `agent.yaml` to your policy's full ARM resource ID.
-1. Run **Foundry Toolkit: Deploy Hosted Agent** and follow the wizard to deploy.
-
-## Verify the guardrail
-
-After deployment, confirm the guardrail filters content by sending a benign prompt and a prompt that violates your policy to the agent's Responses endpoint. The platform screens prompts at the input stage and rejects a violating prompt before the agent runs.
-
-A prompt that passes the policy returns `HTTP 200` with the agent's response. A blocked prompt returns `HTTP 400` with a `content_filter` error:
+To verify the guardrail after deployment, send a benign prompt and then a prompt that violates your configured policy. A blocked prompt returns `HTTP 400` with a `content_filter` error:
 
 ```json
 {
@@ -98,11 +151,84 @@ A prompt that passes the policy returns `HTTP 200` with the agent's response. A 
 }
 ```
 
-If a violating prompt isn't blocked, confirm that the policy referenced by `rai_policy_name` is configured to filter the relevant content category and severity.
+Useful references:
 
-## Next steps
+- [Add a content safety guardrail to a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-hosted-agent-guardrails)
+- [Configure guardrails and controls](https://learn.microsoft.com/en-us/azure/foundry/guardrails/how-to-create-guardrails)
+- [Guardrails and controls overview](https://learn.microsoft.com/en-us/azure/foundry/guardrails/guardrails-overview)
 
-- [Add a content safety guardrail to a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/add-hosted-agent-guardrails) — set a guardrail with `azd`, the Python SDK, or REST
-- [Guardrails and controls overview](https://learn.microsoft.com/en-us/azure/foundry/guardrails/guardrails-overview) — what guardrails are and the risks they detect
-- [Basic hosted agent](../01-basic/) — the agent this sample builds on
-- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
+azd deploy
+```
+
+After deploying, invoke the agent running in Foundry:
+
+**Bash:**
+```bash
+azd ai agent invoke "Write a short friendly hello message."
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke "Write a short friendly hello message."
+```
+
+To stream logs from the running agent:
+
+```bash
+azd ai agent monitor
+```
+
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
+
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
+5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+</details>
+
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.
+
+### Deployment fails because the RAI policy is missing
+
+Replace the placeholder `rai_policy_name` with the full ARM resource ID of an RAI policy that exists on the Foundry resource you deploy to. If `azd provision` created a new Foundry resource, create or select an RAI policy there before deploying.
+
+### A prompt you expected to block is allowed
+
+Confirm the referenced policy filters the relevant content category and severity. The sample only attaches the policy; filtering behavior comes from the policy configuration.

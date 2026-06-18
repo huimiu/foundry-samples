@@ -1,85 +1,187 @@
-# What this sample demonstrates
+# LangGraph Chat Agent (Responses Protocol)
 
-A [LangGraph](https://langchain-ai.github.io/langgraph/) multi-turn chat agent with two local tools, hosted on Foundry over the **Responses protocol** using [`langchain_azure_ai.agents.hosting`](https://github.com/langchain-ai/langchain-azure/tree/main/libs/azure-ai/langchain_azure_ai/agents/hosting).
+A [LangGraph](https://langchain-ai.github.io/langgraph/) multi-turn chat agent hosted on Microsoft Foundry using the **Responses protocol**. It demonstrates a LangGraph ReAct loop with two local tools and OpenAI-compatible response chaining through `previous_response_id`.
 
 ## How It Works
 
-### LangGraph Agent
-
-The agent is built with `langchain.agents.create_agent(model, tools=[...])`, which returns a compiled LangGraph runnable implementing the standard ReAct loop (call model → if tool calls were requested, run them → loop back → return the final message). The agent registers two local tools:
-
-- `get_current_time` — returns the current UTC time.
-- `calculator` — evaluates a simple math expression.
+1. `main.py` loads local settings from `.env`, then builds a Foundry-backed `ChatOpenAI` model from `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` using `DefaultAzureCredential`.
+2. Two LangChain tools are registered: `get_current_time` returns the current UTC time, and `calculator` evaluates a simple math expression in a restricted `eval` environment.
+3. `langchain.agents.create_agent(...)` compiles a LangGraph ReAct agent that can call those tools before producing the final assistant response.
+4. `ResponsesHostServer` exposes the OpenAI-compatible `POST /responses` endpoint on `http://localhost:8088/`.
+5. Conversation state is managed by the Responses host through `previous_response_id`, so the app does not keep its own session store.
 
 See [main.py](main.py) for the full implementation.
 
-### Agent Hosting
+## Environment Variables
 
-The compiled graph is hosted with `ResponsesHostServer`, which exposes the OpenAI-compatible Responses endpoint at `/responses` and handles conversation history, streaming lifecycle events, and tool-call surfacing automatically.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4o`). Declared in `agent.yaml` |
 
-Conversation state is managed server-side by the platform via `previous_response_id` — there is no application-side session storage.
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Authentication uses Managed Identity via `DefaultAzureCredential`.
 
-## Running the Agent Host
+## Running Locally
 
-Follow the instructions in the [Running the Agent Host Locally](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host.
+### Prerequisites
 
-## Interacting with the agent
+- Python 3.12+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
 
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md) for more details. Use this README for sample queries you can send to the agent.
+### Using `azd` (Recommended)
 
-Send a POST request to the server with a JSON body containing an `input` field:
-
-```bash
-# Turn 1 — triggers the get_current_time tool
-curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"input": "What time is it right now?"}'
-```
-
-```powershell
-# Turn 1 — triggers the get_current_time tool
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"input": "What time is it right now?"}').Content
-```
-
-The server responds with a JSON object containing the response text and a response ID. Use that response ID to continue the conversation:
+Create a local `.env` file from the sample template and fill in the required values:
 
 ```bash
-# Turn 2 — chain via previous_response_id; triggers the calculator tool
-curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"input": "What is 42 * 17?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
-
-# Turn 3 — context recall (no tool call)
-curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"input": "Add 100 to that result.", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 ```
 
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
+
+```bash
+azd ai agent run
+```
+
+The agent starts on `http://localhost:8088/`.
+
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "What time is it right now?"
+```
+
+**PowerShell:**
 ```powershell
-# Turn 2 — chain via previous_response_id; triggers the calculator tool
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"input": "What is 42 * 17?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}').Content
-
-# Turn 3 — context recall (no tool call)
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"input": "Add 100 to that result.", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}').Content
+azd ai agent invoke --local "What time is it right now?"
 ```
 
-### Test in Agent Inspector
+**Test with curl:**
 
-Once the agent is running locally, open **Agent Inspector** in VS Code (Command Palette: **Foundry Toolkit: Open Agent Inspector**) to interactively send messages and view responses.
-
-Type the following message in Inspector:
-
-```
-What time is it right now?
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "What time is it right now?", "stream": false}' | jq .
 ```
 
-## Deploying the Agent to Foundry
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
 
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
 
-### Deploying with the Foundry Toolkit VS Code Extension
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Multi-Turn Responses
+
+Responses protocol conversations continue by passing the previous response ID back as `previous_response_id`. The host manages the transcript; the application code stays stateless.
+
+```bash
+curl -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "What time is it right now?"}'
+
+curl -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "What is 42 * 17?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
+```
+
+## The LangGraph Agent
+
+The compiled graph is created by `langchain.agents.create_agent(model, tools=[...])`, which implements the standard ReAct loop: call the model, execute any requested tool calls, loop back to the model, and return the final message. Intermediate `function_call` and `function_call_output` items are surfaced by the Responses protocol when tools are used.
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
+azd deploy
+```
+
+After deploying, invoke the agent running in Foundry:
+
+**Bash:**
+```bash
+azd ai agent invoke "What time is it right now?"
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke "What time is it right now?"
+```
+
+To stream logs from the running agent:
+
+```bash
+azd ai agent monitor
+```
+
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
+
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -91,3 +193,21 @@ To host the agent on Foundry, follow the instructions in the [Deploying the Agen
    - Pick a **CPU and Memory** size.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+</details>
+
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.

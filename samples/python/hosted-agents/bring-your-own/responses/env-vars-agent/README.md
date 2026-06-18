@@ -1,69 +1,51 @@
 **IMPORTANT!** All samples and other resources made available in this GitHub repository ("samples") are designed to assist in accelerating development of agents, solutions, and agent workflows for various scenarios. Review all provided resources and carefully test output behavior in the context of your use case. AI responses may be inaccurate and AI actions should be monitored with human oversight.
 
-# Env Vars Agent — Python (Responses Protocol)
+# Env Vars Agent (Responses Protocol)
 
-A hosted agent built with `azure-ai-agentserver-responses` that demonstrates Foundry's **connection-templated environment-variable injection**. Four example env vars are declared in `agent.manifest.yaml` — covering all four corners of the connection grid (ApiKey × CustomKeys × secret × non-secret) — and injected into the container at runtime by the platform's secret resolver.
-
-The agent exposes a single function-calling tool, `get_env_var(name, kind)`, that returns the runtime value with a **kind-aware safety policy**:
-
-| `kind` | Returned to the model | Why |
-|---|---|---|
-| `metadata` | The **whole value** | Plain, non-secret data (region, account name, feature flags, …) stored in the connection's metadata bag. |
-| `target` | The **whole value** | The connection's endpoint URL — also plain, non-secret. |
-| `credentials` (default) | A **safe fingerprint** (length + first 4 chars + placeholder-resolved check) | Secrets must never leave the agent. The fingerprint is enough to confirm the placeholder resolved without exposing the value. |
-
-### The four example env vars
-
-| Env var | Connection (kind) | Placeholder | Tool `kind` | Returned |
-|---|---|---|---|---|
-| `SECRET_API_KEY` | `dummy-api-key` (ApiKey) | `${{connections.dummy-api-key.credentials.key}}` | `credentials` | fingerprint |
-| `TARGET` | `dummy-api-key` (ApiKey) | `${{connections.dummy-api-key.target}}` | `target` | whole value |
-| `SECRET_KEY` | `dummy-custom-keys` (CustomKeys) | `${{connections.dummy-custom-keys.credentials.secret-key}}` | `credentials` | fingerprint |
-| `NON_SECRET_KEY` | `dummy-custom-keys` (CustomKeys) | `${{connections.dummy-custom-keys.metadata.plain-key}}` | `metadata` | whole value |
-
-Built with `azure-ai-agentserver-responses` (BYO — no Agent Framework). The model call uses the **Azure AI Projects + Responses API** (`AIProjectClient.get_openai_client()` → `client.responses.create(...)`).
+A Bring Your Own hosted agent built with [azure-ai-agentserver-responses](https://pypi.org/project/azure-ai-agentserver-responses/) that demonstrates Foundry connection-templated environment-variable injection. It uses the **Responses protocol** and a function-calling tool that safely reports non-secret values while returning only fingerprints for secrets.
 
 ## How It Works
 
-1. **Connection setup (one-time)**: in your Foundry project, create
-   - an **ApiKey** connection named `dummy-api-key` (give it a `target` URL and a `key`), and
-   - a **CustomKeys** connection named `dummy-custom-keys` with two custom keys — `secret-key` (marked **as secret**) and `plain-key` (plain).
-2. **Template declaration**: `agent.manifest.yaml` declares the four env vars with placeholder values:
-   ```yaml
-   - name: SECRET_API_KEY
-     value: "${{connections.dummy-api-key.credentials.key}}"
-   - name: TARGET
-     value: "${{connections.dummy-api-key.target}}"
-   - name: SECRET_KEY
-     value: "${{connections.dummy-custom-keys.credentials.secret-key}}"
-   - name: NON_SECRET_KEY
-     value: "${{connections.dummy-custom-keys.metadata.plain-key}}"
-   ```
-3. **Runtime resolution**: when the agent container starts, the Foundry platform reads each named connection, resolves each placeholder, and injects the resulting value into the env var.
-4. **Agent execution**: the agent receives natural language messages via `POST /responses`. The Responses-API function-calling loop decides which env var to inspect and which `kind` to pass:
-   - `get_env_var("TARGET", "target")` → `{ status: "RESOLVED", value: "https://api.example.com", … }`
-   - `get_env_var("SECRET_API_KEY", "credentials")` → `{ status: "RESOLVED", length: 32, head: "ab12", … }` *(no raw value)*
-   - `get_env_var("NON_SECRET_KEY", "metadata")` → `{ status: "RESOLVED", value: "westus2", … }`
-   - `get_env_var("SECRET_KEY", "credentials")` → `{ status: "RESOLVED", length: 24, head: "p@ss", … }` *(no raw value)*
-5. The model's tool result is fed back for a natural-language reply.
+1. [agent.yaml](agent.yaml) and [agent.manifest.yaml](agent.manifest.yaml) declare `AZURE_AI_MODEL_DEPLOYMENT_NAME` plus four example environment variables that reference Foundry connections.
+2. At container startup, the Foundry hosting platform resolves placeholders such as `${{connections.dummy-api-key.credentials.key}}` and injects the resulting values into the process environment.
+3. [main.py](main.py) creates a `ResponsesAgentServerHost`, which exposes `POST /responses`; the handler reads the request body `input` field and runs a Responses API function-calling loop.
+4. The model can call `get_env_var(name, kind)`. The tool returns full values for `metadata` and `target` fields, but only a length and first-four-character fingerprint for `credentials` fields.
+5. The handler detects unset, empty, and unresolved placeholder values, feeds tool outputs back to the model, and streams the final answer through Responses protocol lifecycle events.
 
-## Features
+## Environment Variables
 
-- **Connection-templated env vars** — values injected at container start; never persisted in the agent definition
-- **Kind-aware tool** — full value for `metadata`/`target`, fingerprint only for `credentials`
-- **Streaming responses** — real-time SSE streaming via the Responses protocol
-- **No 3rd-party HTTP deps** — pure standard library for the env-var inspection
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes, for local runs | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (for example, `gpt-4.1-mini`). Declared in `agent.yaml` and `agent.manifest.yaml` |
+| `SECRET_API_KEY` | For the env-var injection demo | ApiKey connection credential from `${{connections.dummy-api-key.credentials.key}}`. Returned only as a fingerprint |
+| `TARGET` | For the env-var injection demo | ApiKey connection target from `${{connections.dummy-api-key.target}}`. Returned as a non-secret full value |
+| `SECRET_KEY` | For the env-var injection demo | CustomKeys secret from `${{connections.dummy-custom-keys.credentials.secret-key}}`. Returned only as a fingerprint |
+| `NON_SECRET_KEY` | For the env-var injection demo | CustomKeys metadata value from `${{connections.dummy-custom-keys.metadata.plain-key}}`. Returned as a non-secret full value |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Enables local telemetry. Auto-injected in hosted containers when monitoring is configured |
+
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform. Authentication uses Managed Identity via `DefaultAzureCredential`; locally, use `az login` or another supported credential source.
 
 ## Running Locally
 
 ### Prerequisites
 
-- Python 3.12+
-- Azure CLI installed and authenticated (`az login`)
-- Foundry project with a deployed model (e.g., `gpt-4.1-mini`)
-- (For deployment) the project's hosted-agent feature enabled, plus the two connections referenced above (`dummy-api-key` ApiKey, `dummy-custom-keys` CustomKeys)
+- Python 3.10+
+- Azure CLI installed and authenticated (`az login`) or another `DefaultAzureCredential` source
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- For hosted deployment, an ApiKey connection named `dummy-api-key` and a CustomKeys connection named `dummy-custom-keys`, or updated placeholders that match your project
+- For local testing, sample values in `.env` for `SECRET_API_KEY`, `TARGET`, `SECRET_KEY`, and `NON_SECRET_KEY`
 
 ### Using `azd` (Recommended)
+
+Create a local `.env` file from the sample template and fill in the required values:
+
+```bash
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+```
+
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
@@ -71,75 +53,128 @@ azd ai agent run
 
 The agent starts on `http://localhost:8088/`.
 
-### Without `azd`
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env  # then edit values — fill in any test values you like (skip if .env already exists)
-export FOUNDRY_PROJECT_ENDPOINT="https://your-project.services.ai.azure.com/api/projects/your-project"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1-mini"
-export SECRET_API_KEY="ab12-fake-test-key"
-export TARGET="https://api.example.com"
-export SECRET_KEY="p@ssw0rd-test-value"
-export NON_SECRET_KEY="westus2"
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 python main.py
 ```
 
 The agent starts on `http://localhost:8088/`.
 
-### Test
+</details>
 
-#### 1. Test with azd
+## Invoke
 
-##### Read the ApiKey target (whole value)
+### Using azd
 
-```bash
-azd ai agent invoke --local "what is TARGET? it is the target of an ApiKey connection."
-```
+**Local:**
 
-##### Read the ApiKey credentials (fingerprint only)
-
+**Bash:**
 ```bash
 azd ai agent invoke --local "did SECRET_API_KEY resolve? it is a credentials placeholder."
 ```
 
-##### Read the CustomKeys metadata (whole value)
-
-```bash
-azd ai agent invoke --local "what is NON_SECRET_KEY? it is metadata from a CustomKeys connection."
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "did SECRET_API_KEY resolve? it is a credentials placeholder."
 ```
 
-##### Read the CustomKeys credentials (fingerprint only)
+**Test with curl:**
 
 ```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "did SECRET_API_KEY resolve? it is a credentials placeholder.", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Connection Placeholder Matrix
+
+| Env var | Connection kind | Placeholder | Tool `kind` | Returned to the model |
+|---------|-----------------|-------------|-------------|-----------------------|
+| `SECRET_API_KEY` | ApiKey | `${{connections.dummy-api-key.credentials.key}}` | `credentials` | Fingerprint only |
+| `TARGET` | ApiKey | `${{connections.dummy-api-key.target}}` | `target` | Whole value |
+| `SECRET_KEY` | CustomKeys | `${{connections.dummy-custom-keys.credentials.secret-key}}` | `credentials` | Fingerprint only |
+| `NON_SECRET_KEY` | CustomKeys | `${{connections.dummy-custom-keys.metadata.plain-key}}` | `metadata` | Whole value |
+
+Replace `dummy-api-key`, `dummy-custom-keys`, `secret-key`, and `plain-key` with names from your Foundry project before deploying. For local testing, put any representative values in `.env`; the tool behavior is the same, but no platform resolver is involved.
+
+## How Connection Resolution Works
+
+| Path | Template syntax | Source on the connection | Use for |
+|------|-----------------|--------------------------|---------|
+| `credentials.<field>` | `${{connections.<name>.credentials.key}}` or `${{connections.<name>.credentials.<key-name>}}` | The connection secret store | API keys and CustomKeys entries marked as secret |
+| `target` | `${{connections.<name>.target}}` | The connection target endpoint | Base URLs and endpoints |
+| `metadata.<key>` | `${{connections.<name>.metadata.<key-name>}}` | The connection metadata bag | Plain CustomKeys values such as region, account name, or feature flags |
+
+CustomKeys connections can mix secret and non-secret values. Secret keys land in `credentials`; non-secret keys land in `metadata`. The agent mirrors that split with the `kind` argument and never returns raw credential values.
+
+## Local Test Prompts
+
+```bash
+azd ai agent invoke --local "what is TARGET? it is the target of an ApiKey connection."
+azd ai agent invoke --local "did SECRET_API_KEY resolve? it is a credentials placeholder."
+azd ai agent invoke --local "what is NON_SECRET_KEY? it is metadata from a CustomKeys connection."
 azd ai agent invoke --local "did SECRET_KEY resolve? it is a credentials placeholder."
 ```
 
-#### 2. Test with curl
+To observe streaming Responses protocol events directly, use `stream: true`:
 
 ```bash
 curl -N -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
   -d '{"input": "what is TARGET? it is the target of an ApiKey connection.", "stream": true}'
-
-curl -N -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "did SECRET_KEY resolve? it is a credentials placeholder.", "stream": true}'
-```
-
-#### 3. Test in Agent Inspector
-
-Once the agent is running, open **Agent Inspector** in VS Code to interactively send messages and view responses.
-
-```
-what is TARGET? it is the target of an ApiKey connection.
-```
-
-```
-did SECRET_KEY resolve? it is a credentials placeholder.
 ```
 
 ## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -153,7 +188,13 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
+azd ai agent invoke "did SECRET_API_KEY resolve? it is a credentials placeholder."
+```
+
+**PowerShell:**
+```powershell
 azd ai agent invoke "did SECRET_API_KEY resolve? it is a credentials placeholder."
 ```
 
@@ -165,76 +206,44 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-## How the Connection Resolution Works
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-The resolver supports three placeholder paths today, mapped to the three parts of a connection:
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
+5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-| Path | Template syntax | Source on the connection | Use for |
-|------|-----------------|--------------------------|---------|
-| `credentials.<field>` | `${{connections.<name>.credentials.key}}` (ApiKey)<br>`${{connections.<name>.credentials.<key-name>}}` (CustomKeys secret) | The connection's secret store | API keys; CustomKeys entries marked **as secret** |
-| `target` | `${{connections.<name>.target}}` | The connection's `target` field (endpoint URL) | Endpoints / base URLs |
-| `metadata.<key>` | `${{connections.<name>.metadata.<key-name>}}` | The connection's `metadata` bag | Plain (non-secret) CustomKeys entries — region, account name, feature flags, etc. |
-
-> **CustomKeys connections can mix both:** when you add a custom key, you choose whether it's a secret or not. Secret keys land in `credentials` and are reachable via `credentials.<key-name>`; non-secret keys land in `metadata` and are reachable via `metadata.<key-name>`. A single CustomKeys connection can hold any combination — which is exactly what `dummy-custom-keys` shows above.
-
-When the agent container starts, the platform reads the connection by name, resolves each placeholder to the corresponding value, and injects it into the named env var. **Secrets are never persisted into the agent definition** — only the placeholder is stored. `target` and `metadata` values are *not* secrets; they are stored on the connection itself in plain text and surfaced verbatim, but the same placeholder mechanism keeps the manifest portable across environments.
-
-The agent's `get_env_var(name, kind)` tool mirrors this three-way split: pass `kind=metadata` or `kind=target` to get the raw value back; pass `kind=credentials` (or omit it — it's the default) to get a safe fingerprint instead.
-
-## File Layout
-
-| File | Purpose |
-|------|---------|
-| `main.py` | `ResponsesAgentServerHost` startup + Responses-API function-calling loop with the `get_env_var` tool |
-| `requirements.txt` | Python dependencies — `azure-ai-agentserver-responses` + `azure-ai-projects` + `azure-identity` |
-| `agent.yaml` | Container agent spec (`kind: hosted`, protocol, resources) |
-| `agent.manifest.yaml` | Foundry deployment manifest — model, env vars, connection placeholders |
-| `Dockerfile` | python:3.12-slim image, exposes port 8088 |
-| `.env.example` or `.env` | Template for local-run env vars |
-| `.dockerignore` | Excludes build artifacts and `.env` from the container image |
-| `README.md` | The README file |
+</details>
 
 ## Troubleshooting
 
-### An env var shows status `UNRESOLVED_PLACEHOLDER`
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
-The secret resolver did not run or failed for that env var. Check:
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
 
-- The connection named in `${{connections.<name>.<path>}}` exists in the project (or the parent account) with the **exact** name.
-- For `CustomKeys` connections, the custom key name in the connection must match the `<field>` part of the template (case-sensitive).
-- The `kind` you used in the placeholder matches where the field actually lives on the connection (a key marked as secret is in `credentials`, not `metadata`).
-- The hosted-agent feature flag is enabled for the workspace.
-- The agent was redeployed after the env var was added — connection resolution happens at container start.
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 
-### Azure OpenAI Permission Denied (401)
-
-If you see an error like:
-
-```
-Error code: 401 - The principal <principal-id> lacks the required data action
-Microsoft.CognitiveServices/accounts/OpenAI/deployments/chat/completions/action ...
-```
-
-The identity running the agent does not have the required RBAC roles on the Azure AI Foundry project. Assign:
-
-- **Cognitive Services OpenAI User**
-- **Azure AI User**
+**Fix for local builds:**
 
 ```bash
-SUBSCRIPTION_ID="<your-subscription-id>"
-RESOURCE_GROUP="<your-resource-group>"
-PROJECT_NAME="<your-ai-foundry-project-name>"
-PRINCIPAL_ID="<principal-id-from-error-message>"
-
-az role assignment create \
-  --assignee "$PRINCIPAL_ID" \
-  --role "Cognitive Services OpenAI User" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.MachineLearningServices/workspaces/$PROJECT_NAME"
-
-az role assignment create \
-  --assignee "$PRINCIPAL_ID" \
-  --role "Azure AI User" \
-  --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.MachineLearningServices/workspaces/$PROJECT_NAME"
+docker build --platform=linux/amd64 -t image .
 ```
 
-> **Note:** It may take a few minutes for role assignments to propagate.
+This forces the image to be built for the required `amd64` architecture.
+
+### An env var shows status `UNRESOLVED_PLACEHOLDER`
+
+The platform resolver did not replace the placeholder before the container started. Check that the connection name and field name match exactly, the field is stored in the expected connection area (`credentials`, `target`, or `metadata`), and the agent was redeployed after `agent.yaml` or `agent.manifest.yaml` changed.
+
+### Azure OpenAI permission denied (401)
+
+The identity running the agent needs RBAC permissions on the Foundry project and model deployment. Assign roles such as **Cognitive Services OpenAI User** and **Azure AI User**, then allow a few minutes for propagation before retrying.

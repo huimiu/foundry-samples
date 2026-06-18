@@ -1,149 +1,211 @@
-# What this sample demonstrates
+# Declarative Customer Support Workflow (Responses Protocol)
 
-A realistic **multi-turn** [Agent Framework](https://github.com/microsoft/agent-framework) **declarative workflow** — defined entirely in YAML — hosted using the **Responses protocol**. It shows how a declarative workflow that invokes multiple Foundry-hosted agents can run end-to-end on every user turn while reading the prior conversation through `Conversation.messages` (populated automatically by `Workflow.as_agent()`).
-
-> Read more about declarative workflows in the [Agent Framework documentation](https://learn.microsoft.com/en-us/agent-framework/workflows/declarative/?pivots=programming-language-python) and about workflow-as-an-agent in the [Workflow as an Agent documentation](https://learn.microsoft.com/en-us/agent-framework/workflows/as-agents?pivots=programming-language-python).
+A multi-turn [Agent Framework](https://github.com/microsoft/agent-framework) declarative workflow hosted on Microsoft Foundry using the **Responses protocol**. The workflow is defined in YAML, routes each turn through a triage agent, and hands technical or billing issues to specialist agents.
 
 ## How It Works
 
-### The Workflow
+1. `main.py` creates a shared `FoundryChatClient` pointed at your Foundry project endpoint and model deployment, authenticated with `DefaultAzureCredential`
+2. Three Agent Framework `Agent` instances are created: `TriageAgent`, `TechSupportAgent`, and `BillingAgent`
+3. `TriageAgent` returns a structured `TriageResponse` Pydantic model so `workflow.yaml` can branch on `Category`, `NeedsClarification`, `ClarificationQuestion`, and `Reply`
+4. `WorkflowFactory` loads `workflow.yaml`, resolves `InvokeAzureAgent` actions by agent name, and wraps the workflow with `Workflow.as_agent()`
+5. Each user turn re-runs the workflow with prior turns available through `Conversation.messages`, enabling coherent multi-turn triage and specialist follow-ups
+6. `ResponsesHostServer` exposes the workflow agent through an OpenAI-compatible `POST /responses` endpoint and starts on `http://localhost:8088/`
 
-[`workflow.yaml`](workflow.yaml) describes a customer-support triage flow:
+See [main.py](main.py) and [workflow.yaml](workflow.yaml) for the full implementation.
 
-1. `InvokeAzureAgent: TriageAgent` — looks at the full conversation so far and emits a structured `TriageResponse` (`Category`, `NeedsClarification`, `ClarificationQuestion`, `Reply`).
-2. `ConditionGroup` routes on the triage decision:
-   - **NeedsClarification** → `SendActivity` asks one focused follow-up question and ends the turn.
-   - **Category = "Technical"** → `SendActivity` confirms the handoff, then `InvokeAzureAgent: TechSupportAgent` answers with `autoSend: true` so its reply streams directly to the caller.
-   - **Category = "Billing"** → same pattern, routed to `BillingAgent`.
-   - **else** → `SendActivity` returns the triage agent's `Reply` directly (good for greetings or general questions).
+## Environment Variables
 
-Each user message re-runs the workflow from the trigger. Because `Workflow.as_agent()` populates `Conversation.messages` with the prior turns of the conversation, every `InvokeAzureAgent` call sees the full history — which is what makes the triage decision and the specialist follow-ups coherent across turns.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4.1-mini`). Declared in `agent.yaml` |
 
-### Agent Hosting
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Authentication uses Managed Identity via `DefaultAzureCredential`.
 
-[`main.py`](main.py) builds three `Agent` instances on top of a shared `FoundryChatClient` (one per workflow role), registers them with the `WorkflowFactory` so the YAML's `InvokeAzureAgent` actions can resolve them by name, loads the workflow, wraps it with `.as_agent(...)`, and hands the agent to `ResponsesHostServer`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
-
-The triage agent is configured with `response_format=TriageResponse` (a Pydantic model) so the workflow can read its structured fields via `Local.Triage.*`. The specialist agents are plain text and use `autoSend: true` to deliver their reply straight to the caller.
-
-## Option 1: Azure Developer CLI (`azd`)
+## Running Locally
 
 ### Prerequisites
 
-1. **Azure Developer CLI (`azd`)** — [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd)
-2. Install the AI agent extension:
-   ```bash
-   azd ext install microsoft.foundry
-   ```
-3. Authenticate:
-   ```bash
-   azd auth login
-   ```
+- Python 3.10+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
 
-### Initialize the agent project
+### Using `azd` (Recommended)
 
-No cloning required. Create a new folder and initialize from the manifest:
+Create a local `.env` file from the sample template and fill in the required values:
 
 ```bash
-mkdir my-declarative-agent && cd my-declarative-agent
-
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/agent-framework/responses/09-declarative-customer-support/agent.manifest.yaml
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 ```
 
-Follow the prompts to configure your Foundry project and model deployment. If you don't have an existing Foundry project, `azd ai agent init` will guide you through creating one.
-
-### Provision Azure resources (if needed)
-
-If you don't already have a Foundry project and model deployment:
-
-```bash
-azd provision
-```
-
-### Run the agent locally
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
 
 ```bash
 azd ai agent run
 ```
 
-The agent host will start on `http://localhost:8088`.
+The agent starts on `http://localhost:8088/`.
 
-### Invoke the local agent
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-In a separate terminal, from the project directory:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
 ```bash
-azd ai agent invoke --local "I have a problem"
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
 ```
 
-A typical multi-turn session:
+The agent starts on `http://localhost:8088/`.
 
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
 ```bash
-azd ai agent invoke --local "I have a problem"
-# → "Could you tell me a bit more about what's going on?"
-
-azd ai agent invoke --local "My laptop won't turn on"
-# → "Connecting you with technical support..."
-# → TechSupportAgent: "Let's start simple — is the charger LED on when plugged in?"
-
-azd ai agent invoke --local "Yes the LED is on"
-# → TechSupportAgent: "Great. Try a hard reset: hold the power button for 30 seconds..."
+azd ai agent invoke --local "I have a problem with my laptop"
 ```
 
-Or for billing:
-
-```bash
-azd ai agent invoke --local "I was double-charged this month"
-# → "Connecting you with billing support..."
-# → BillingAgent: "I'm sorry about that. Can you share the last 4 digits of the card on file?"
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "I have a problem with my laptop"
 ```
 
-### Deploy to Foundry
-
-Once tested locally, deploy to Microsoft Foundry:
+**Test with curl:**
 
 ```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "I have a problem with my laptop", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Declarative Workflow
+
+[`workflow.yaml`](workflow.yaml) defines the customer-support triage flow:
+
+1. `InvokeAzureAgent: TriageAgent` inspects the full conversation so far and emits a structured `TriageResponse`
+2. A `ConditionGroup` asks a clarification question when `NeedsClarification` is true
+3. Technical issues send a handoff message and invoke `TechSupportAgent` with `autoSend: true`
+4. Billing issues send a handoff message and invoke `BillingAgent` with `autoSend: true`
+5. General questions return the triage agent's `Reply`
+
+Useful references:
+
+- [Declarative workflows](https://learn.microsoft.com/en-us/agent-framework/workflows/declarative/?pivots=programming-language-python)
+- [Workflow as an Agent](https://learn.microsoft.com/en-us/agent-framework/workflows/as-agents?pivots=programming-language-python)
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
 azd deploy
 ```
 
-For the full deployment guide, see [Deploy a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/deploy-hosted-agent).
+After deploying, invoke the agent running in Foundry:
 
-### Invoke the deployed agent
-
+**Bash:**
 ```bash
-azd ai agent invoke "I have a problem"
+azd ai agent invoke "I have a problem with my laptop"
 ```
 
-## Option 2: VS Code (Foundry Toolkit)
+**PowerShell:**
+```powershell
+azd ai agent invoke "I have a problem with my laptop"
+```
 
-### Prerequisites
+To stream logs from the running agent:
 
-1. **VS Code** with the **[Foundry Toolkit](https://marketplace.visualstudio.com/items?itemName=ms-azuretools.azure-ai-foundry)** extension installed.
-2. Sign in to Azure in VS Code.
+```bash
+azd ai agent monitor
+```
 
-### Create the project
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Create Hosted Agent**.
-2. Select this sample from the gallery. The extension scaffolds the project into a new workspace and generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically.
-3. Complete the **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one).
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-### Run and debug the agent
-
-Press **F5** to start the agent in debug mode. The agent host will start on `http://localhost:8088`.
-
-### Test with Agent Inspector
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-2. The Inspector connects to the running agent. Send messages to chat and view streamed responses.
-
-### Deploy to Foundry
-
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate settings.
-2. If prompted, complete **Foundry Project Setup** to select subscription and project.
-3. On the **Basics** tab, choose deployment method (**Code** or **Container**) and confirm the agent name.
-4. On **Review + Deploy**, confirm runtime details, pick **CPU and Memory** size, and click **Deploy**.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
 
-## Next steps
+</details>
 
-- [Quickstart: Create a hosted agent](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent) — end-to-end walkthrough using `azd`
-- [Manage hosted agents](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/manage-hosted-agent) — monitor and manage deployed agents
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.

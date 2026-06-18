@@ -1,132 +1,122 @@
-# What this sample demonstrates
+# MCP Tools Agent (Responses Protocol)
 
-An agent demonstrating client-side and server-side MCP (Model Context Protocol) tool integration for documentation search — the **Agent with MCP Tools (Responses Protocol)** sample. Built with [Agent Framework](https://github.com/microsoft/agent-framework), it shows two layers of MCP: client-side MCP (agent connects directly to an MCP server) and server-side MCP (LLM provider connects to the MCP server on behalf of the agent).
+A developer assistant built with the [Agent Framework](https://github.com/microsoft/agent-framework) and hosted with the **Responses protocol**. It demonstrates both client-side and server-side Model Context Protocol (MCP) tool integration using the Microsoft Learn MCP server.
 
 ## How It Works
 
-The agent is configured with MCP tool providers that expose documentation search capabilities. When a user asks a question, the LLM determines which MCP tools to call — such as docs search, code sample search, or docs fetch — the framework routes the tool calls through the appropriate MCP connection (client-side or server-side), and the results are fed back to the model to compose an informed answer.
+1. `Program.cs` loads a local `.env` file with `DotNetEnv` when present, then reads the Foundry project endpoint and model deployment
+2. `McpClient.CreateAsync(...)` connects directly to `https://learn.microsoft.com/api/mcp` and lists Microsoft Learn tools for client-side invocation
+3. `HostedMcpServerTool` declares the same MCP server as a server-side tool with `microsoft_docs_search` allowed and approval disabled
+4. The client-side MCP tools and server-side MCP tool are combined and passed to `AIProjectClient.AsAIAgent(...)`
+5. `AddFoundryResponses(agent)` and `MapFoundryResponses()` host the agent behind `POST /responses`
+6. The agent starts on `http://localhost:8088/`
 
 See [Program.cs](Program.cs) for the full implementation.
 
-## Running the Agent Locally
-
-### Prerequisites
-
-Before running this sample, ensure you have:
-
-1. **Azure Developer CLI (`azd`)** (recommended)
-   - [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) (1.25 or later) and the unified Foundry CLI extension: `azd ext install microsoft.foundry`
-   - Authenticated: `azd auth login`
-
-2. **Azure CLI**
-   - Installed and authenticated: `az login`
-
-3. **.NET 10.0 SDK or later**
-   - Verify your version: `dotnet --version`
-   - Download from [https://dotnet.microsoft.com/download](https://dotnet.microsoft.com/download)
-
-> [!NOTE]
-> You do **not** need an existing [Microsoft Foundry](https://learn.microsoft.com/en-us/azure/ai-foundry/what-is-foundry?view=foundry) project or model deployment to get started — `azd provision` creates them for you. If you already have a project, see the [note below](#using-azd-recommended-for-cli-workflows) on how to target it.
-
-### Environment Variables
+## Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Foundry project endpoint. Auto-injected in hosted containers; set automatically by `azd ai agent run` locally. |
-| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name — must match your Foundry project deployment. Declared in `agent.manifest.yaml`. |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Recommended | Enables telemetry. Auto-injected in hosted containers; set manually for local dev. |
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | No | Model deployment name. Defaults to `gpt-4o`. Declared in `agent.yaml` |
 
-**Local development (without `azd`):**
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` is auto-injected by the platform. Authentication uses Managed Identity via `DefaultAzureCredential`. Locally, the sample loads a `.env` file via `DotNetEnv` if present.
 
-```bash
-# Set env vars directly — .NET does not natively read .env files
-export FOUNDRY_PROJECT_ENDPOINT="https://<account>.services.ai.azure.com/api/projects/<project>"
-export AZURE_AI_MODEL_DEPLOYMENT_NAME="<your-model-deployment-name>"
-```
+## Running Locally
 
-> [!NOTE]
-> When using `azd ai agent run`, environment variables are handled automatically — no manual setup needed.
+### Prerequisites
 
-### Installing Dependencies
+- .NET 10.0 SDK or later (`dotnet --version`)
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- Azure CLI authentication for manual local runs (`az login`)
+- Network access to `https://learn.microsoft.com/api/mcp`
 
-> [!NOTE]
-> If using `azd ai agent run`, dependencies are restored automatically — skip to [Running the Sample](#running-the-sample).
+### Using `azd` (Recommended)
 
-Dependencies are restored automatically when building the project:
+Start the agent locally with the `run` command — `azd` restores dependencies, sets environment variables, builds, and starts the agent:
 
 ```bash
-dotnet restore
-```
-
-### Running the Sample
-
-The recommended way to run and test hosted agents locally is with the Azure Developer CLI (`azd`) or the Foundry Toolkit VS Code extension.
-
-#### Using the Foundry Toolkit VS Code Extension
-
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
-
-Chat with a running agent using the **Agent Inspector**:
-
-1. Start the agent locally first using **Using `azd`** or **Without `azd`** above. The agent listens on `http://localhost:8088/`.
-2. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Open Agent Inspector**.
-3. The Inspector auto-connects to the running agent. Send messages to chat with the agent and watch the streamed responses.
-
-#### Using [`azd`](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd) (recommended for CLI workflows)
-
-No cloning required. Create a new folder, point `azd` at the manifest on GitHub, and it sets up the sample and generates Bicep infrastructure, `agent.yaml`, and env config automatically:
-
-```bash
-# Create a new folder for the agent and navigate into it
-mkdir mcp-tools-agent && cd mcp-tools-agent
-
-# Initialize from the manifest — azd reads it, downloads the sample,
-# and generates Bicep infrastructure, agent.yaml, and env config
-azd ai agent init -m https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/csharp/hosted-agents/agent-framework/mcp-tools/agent.manifest.yaml
-
-# Provision Azure resources (Foundry project, model deployment, App Insights)
-azd provision
-
-# Run the agent locally (handles env vars, build, and startup)
 azd ai agent run
 ```
 
-> [!NOTE]
-> If you've already cloned this repository, pass a local path to the manifest instead:
-> `azd ai agent init -m <path-to-repo>/samples/csharp/hosted-agents/agent-framework/mcp-tools/agent.manifest.yaml`
+The agent starts on `http://localhost:8088/`.
 
-> [!NOTE]
-> If you already have a Foundry project and model deployment, add `-p <project-id> -d <deployment-name>` to `azd ai agent init` to target existing resources. You can also skip provisioning entirely and configure env vars manually — see [Without `azd`](#without-azd).
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-The agent starts on `http://localhost:8088/`. To invoke it:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
 
-```bash
-azd ai agent invoke --local "Search Microsoft Learn for how to use dependency injection in ASP.NET Core"
-```
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Restore dependencies:
+   ```bash
+   dotnet restore
+   ```
+4. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
 
-Or use curl directly:
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
 
-```bash
-# Triggers client-side MCP tools (docs search, code samples, docs fetch)
-curl -sS -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "Search Microsoft Learn for how to use dependency injection in ASP.NET Core", "stream": false}' | jq .
-
-# Triggers code sample search (client-side only)
-curl -sS -X POST http://localhost:8088/responses \
-  -H "Content-Type: application/json" \
-  -d '{"input": "Find a C# code sample for creating an Azure Blob Storage container", "stream": false}' | jq .
-```
-
-#### Without `azd`
-
-If running without `azd`, set environment variables manually (see [Environment Variables](#environment-variables)), then:
+Set the environment variables from [Environment Variables](#environment-variables) (or place them in a `.env` file, which the sample loads via `DotNetEnv`), then:
 
 ```bash
 dotnet run
 ```
 
-### Deploying the Agent to Microsoft Foundry
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "Search Microsoft Learn for how to use dependency injection in ASP.NET Core"
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "Search Microsoft Learn for how to use dependency injection in ASP.NET Core"
+```
+
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "Search Microsoft Learn for how to use dependency injection in ASP.NET Core", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## MCP Configuration
+
+This sample intentionally uses two MCP patterns against the same Microsoft Learn MCP server:
+
+- **Client-side MCP:** the agent process connects to the MCP server with `McpClient`, discovers tools, and handles tool calls locally.
+- **Server-side MCP:** `HostedMcpServerTool` lets the Responses API provider connect to the MCP server and invoke `microsoft_docs_search` on behalf of the agent.
+
+Useful prompts include documentation search and code-sample search, for example `Find a C# code sample for creating an Azure Blob Storage container`.
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -140,7 +130,13 @@ azd deploy
 
 After deploying, invoke the agent running in Foundry:
 
+**Bash:**
 ```bash
+azd ai agent invoke "Search Microsoft Learn for how to use dependency injection in ASP.NET Core"
+```
+
+**PowerShell:**
+```powershell
 azd ai agent invoke "Search Microsoft Learn for how to use dependency injection in ASP.NET Core"
 ```
 
@@ -152,9 +148,10 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-#### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -166,6 +163,8 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
    - Pick a **CPU and Memory** size.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+</details>
 
 ## Troubleshooting
 
@@ -182,3 +181,7 @@ docker build --platform=linux/amd64 -t image .
 ```
 
 This forces the image to be built for the required `amd64` architecture.
+
+### MCP tools are unavailable
+
+The host connects to the Microsoft Learn MCP server during startup. Check network access to `https://learn.microsoft.com/api/mcp` and confirm the startup logs show the discovered client-side MCP tools.

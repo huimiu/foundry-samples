@@ -1,103 +1,198 @@
-# What this sample demonstrates
+# LangGraph Observability Agent (Responses Protocol)
 
-An **instrumented** [LangGraph](https://langchain-ai.github.io/langgraph/) agent hosted on Foundry over the **Responses protocol** using [`langchain_azure_ai.agents.hosting`](https://github.com/langchain-ai/langchain-azure/tree/main/libs/azure-ai/langchain_azure_ai/agents/hosting). A single call to [`enable_auto_tracing()`](https://github.com/langchain-ai/langchain-azure/blob/main/libs/azure-ai/langchain_azure_ai/callbacks/tracers/auto_instrument.py) wires GenAI OpenTelemetry spans into every LangGraph node, LLM call, and tool invocation, with no per-call instrumentation code.
+An instrumented [LangGraph](https://langchain-ai.github.io/langgraph/) agent hosted on Microsoft Foundry using the **Responses protocol**. It enables GenAI OpenTelemetry tracing so each LangGraph node, LLM call, and tool invocation is emitted to Azure Monitor / Application Insights.
 
 ## How It Works
 
-### Tools
-
-| Tool | Purpose |
-|---|---|
-| `get_current_time` | Local `@tool` — returns the current UTC time. |
-| `calculator` | Local `@tool` — evaluates a math expression. |
-
-System prompt: *"You are a friendly assistant. Keep your answers brief."*
-
-### LangGraph Agent
-
-The compiled graph is built with `langchain.agents.create_agent(model, tools=[...], system_prompt=...)`, which returns a compiled LangGraph runnable implementing the standard ReAct loop.
+1. `main.py` loads local settings from `.env`, then calls `enable_auto_tracing()` before building the graph.
+2. The Foundry-backed `ChatOpenAI` model is built from `FOUNDRY_PROJECT_ENDPOINT` and `AZURE_AI_MODEL_DEPLOYMENT_NAME` using `DefaultAzureCredential`, with `use_responses_api=True` and `output_version="responses/v1"` so spans include response IDs.
+3. Two LangChain tools are registered: `get_current_time` returns the current UTC time, and `calculator` evaluates a simple math expression in a restricted `eval` environment.
+4. `langchain.agents.create_agent(...)` compiles a LangGraph ReAct agent with those tools and a brief system prompt.
+5. `ResponsesHostServer` exposes the OpenAI-compatible `POST /responses` endpoint on `http://localhost:8088/` while OpenTelemetry spans flow to the configured exporter.
 
 See [main.py](main.py) for the full implementation.
 
-### Agent Hosting
+## Environment Variables
 
-The compiled graph is hosted with `ResponsesHostServer`, which exposes the OpenAI-compatible Responses endpoint at `/responses` and handles conversation history, streaming lifecycle events, and tool-call surfacing automatically.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name (e.g. `gpt-4o`). Declared in `agent.yaml` |
+| `OTEL_AUTO_CONFIGURE_AZURE_MONITOR` | No | Set to `true` in `agent.yaml` so `enable_auto_tracing()` configures Azure Monitor automatically |
+| `AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED` | No | Set to `true` in `agent.yaml` and `.env.example` to capture prompts, completions, and tool I/O on spans |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Injected by Foundry when hosted. Set manually only to export telemetry from a local `python main.py` run |
 
-### Instrumentation
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` and `APPLICATIONINSIGHTS_CONNECTION_STRING` are auto-injected by the platform — you only need to set `AZURE_AI_MODEL_DEPLOYMENT_NAME`. Authentication uses Managed Identity via `DefaultAzureCredential`.
 
-LangGraph does not auto-enable tracing from environment variables alone — a code call is required. The sample makes this one call at startup:
+## Running Locally
 
-```python
-from langchain_azure_ai.callbacks.tracers import enable_auto_tracing
-enable_auto_tracing()
-```
+### Prerequisites
 
-This injects an `AzureAIOpenTelemetryTracer` into every LangChain `BaseCallbackManager` and into the LangGraph helper factories, so every node, LLM call, and tool invocation produces [GenAI semantic-convention](https://opentelemetry.io/docs/specs/semconv/gen-ai/) spans.
+- Python 3.12+
+- An Azure AI Foundry project with a model deployment (or let `azd provision` create one)
+- Optional: an Application Insights connection string if you want local `python main.py` runs to export telemetry
 
-The sample sets two tracing toggles in [agent.manifest.yaml](agent.manifest.yaml) and [agent.yaml](agent.yaml):
+### Using `azd` (Recommended)
 
-| Variable | Purpose |
-|---|---|
-| `OTEL_AUTO_CONFIGURE_AZURE_MONITOR` | Let `enable_auto_tracing()` configure the OpenTelemetry `TracerProvider` and Azure Monitor exporter itself, using `APPLICATIONINSIGHTS_CONNECTION_STRING`. |
-| `AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED` | Capture prompts, completions, and tool I/O on spans. |
-
-The `APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable is injected when the agent is deployed to Foundry, so no extra setup is needed in hosted mode. To ship telemetry from a **local** run, you must set it yourself — either in `.env` (for `python main.py`) or via `azd env set` (for `azd ai agent run`).
-
-## Running the Agent Host
-
-Follow the instructions in the [Running the Agent Host Locally](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md#running-the-agent-host-locally) section of the README in the parent directory to run the agent host. To ship telemetry from a local run, also set `APPLICATIONINSIGHTS_CONNECTION_STRING` — see [.env.example](.env.example).
-
-## Interacting with the agent
-
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md) for more details. Use this README for sample queries you can send to the agent.
-
-Send a single-turn request that exercises both tools and produces a rich span tree:
+Create a local `.env` file from the sample template and fill in the required values:
 
 ```bash
-curl -X POST http://localhost:8088/responses \
-    -H "Content-Type: application/json" \
-    -d '{"input": "What time is it right now, and what is 42 multiplied by 17?"}'
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
 ```
 
-```powershell
-(Invoke-WebRequest -Uri http://localhost:8088/responses -Method POST -ContentType "application/json" -Body '{"input": "What time is it right now, and what is 42 multiplied by 17?"}').Content
+The sample loads `.env` automatically when running locally. Next, start the agent locally with the `run` command:
+
+```bash
+azd ai agent run
 ```
 
-Invoke with `azd`:
+The agent starts on `http://localhost:8088/`.
 
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Set up a Python virtual environment:
+
+   **Windows (PowerShell):**
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\Activate.ps1
+   ```
+
+   **macOS/Linux:**
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
+
+4. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   pip install debugpy
+   ```
+
+5. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+```bash
+pip install -r requirements.txt
+cp .env.example .env  # skip if .env already exists
+# Edit .env — see Environment Variables above
+python main.py
+```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "What time is it right now, and what is 42 multiplied by 17?"
+```
+
+**PowerShell:**
 ```powershell
 azd ai agent invoke --local "What time is it right now, and what is 42 multiplied by 17?"
 ```
 
-A typical span hierarchy for this request:
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "What time is it right now, and what is 42 multiplied by 17?", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
+
+## Observability and Telemetry
+
+LangGraph tracing is enabled with one startup call:
+
+```python
+from langchain_azure_ai.callbacks.tracers import enable_auto_tracing
+
+enable_auto_tracing()
+```
+
+`enable_auto_tracing()` injects an Azure AI OpenTelemetry tracer into LangChain callback managers and LangGraph helper factories. The sample's agent and manifest set:
+
+| Variable | Purpose |
+|----------|---------|
+| `OTEL_AUTO_CONFIGURE_AZURE_MONITOR` | Lets tracing configure the `TracerProvider` and Azure Monitor exporter using `APPLICATIONINSIGHTS_CONNECTION_STRING` |
+| `AZURE_TRACING_GEN_AI_CONTENT_RECORDING_ENABLED` | Captures prompt, completion, and tool payload content on GenAI spans |
+
+A typical span hierarchy for the invoke prompt is:
 
 - `invoke_agent` — the overall agent turn.
 - `chat` — each call to the underlying model.
-- `execute_tool` — each tool invocation (`get_current_time`, `calculator`).
+- `execute_tool` — each tool invocation, such as `get_current_time` or `calculator`.
 
-See the [OpenTelemetry GenAI Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/) for the span and attribute reference.
+In hosted mode, Foundry injects the Application Insights connection string and traces appear in the Foundry portal under the agent's **Traces** tab. For local `python main.py` telemetry, set `APPLICATIONINSIGHTS_CONNECTION_STRING` and `OTEL_AUTO_CONFIGURE_AZURE_MONITOR=true` in `.env`.
 
-### Test in Agent Inspector
+## Deploying the Agent to Microsoft Foundry
 
-Once the agent is running locally, open **Agent Inspector** in VS Code (Command Palette: **Foundry Toolkit: Open Agent Inspector**) to interactively send messages and view responses.
+### Using azd
 
-Type the following message in Inspector:
+Once you've tested locally, deploy to Microsoft Foundry:
 
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
+azd deploy
 ```
-What time is it right now, and what is 42 multiplied by 17?
+
+After deploying, invoke the agent running in Foundry:
+
+**Bash:**
+```bash
+azd ai agent invoke "What time is it right now, and what is 42 multiplied by 17?"
 ```
 
-## Deploying the Agent to Foundry
+**PowerShell:**
+```powershell
+azd ai agent invoke "What time is it right now, and what is 42 multiplied by 17?"
+```
 
-To host the agent on Foundry, follow the instructions in the [Deploying the Agent to Foundry](https://github.com/microsoft-foundry/foundry-samples/blob/main/samples/python/hosted-agents/langgraph/README.md#deploying-the-agent-to-foundry) section of the README in the parent directory.
+To stream logs from the running agent:
 
-### Viewing telemetry in Foundry
+```bash
+azd ai agent monitor
+```
 
-Once deployed, the agent's traces, metrics, and logs flow into the Application Insights workspace associated with your Foundry project. In the Foundry portal, open the agent and switch to the **Traces** tab to see each conversation and drill into its span tree.
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-### Deploying with the Foundry Toolkit VS Code Extension
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
 3. On the **Basics** tab, configure the core deployment settings:
    - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
@@ -109,3 +204,21 @@ Once deployed, the agent's traces, metrics, and logs flow into the Application I
    - Pick a **CPU and Memory** size.
    - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
 5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+</details>
+
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.

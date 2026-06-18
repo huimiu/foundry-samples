@@ -1,47 +1,188 @@
-# What this sample demonstrates
+# Teams Activity Agent (Responses Protocol)
 
-An [Agent Framework](https://github.com/microsoft/agent-framework) hosted agent that can be deployed to Foundry and published to Teams.
-
-After publishing, users can send messages with file attachments to the agent. It can also answer questions related with Teams and calendar.
-
-![Using Work IQ tool](./teams-activity.png)
+An Agent Framework hosted agent that can be deployed to Microsoft Foundry, connected to Work IQ toolbox tools, and published to Teams. It uses the **Responses protocol** for local and hosted invocation.
 
 ## How It Works
 
-### Model Integration
+1. `Program.cs` loads a local `.env` file with `DotNetEnv` when present, then reads the Foundry project endpoint, model deployment, and toolbox name
+2. `AIProjectClient.AsAIAgent(...)` creates a concise assistant backed by the configured Foundry model
+3. `AgentHost.CreateBuilder(args)` plus `AddFoundryResponses(agent)` expose the agent behind `POST /responses`
+4. `AddFoundryToolboxes(toolboxName)` registers the Foundry Toolbox so Work IQ Teams and calendar MCP tools can be discovered through the Foundry toolbox proxy
+5. The toolbox and its Teams/calendar connections are declared in [`agent.manifest.yaml`](agent.manifest.yaml)
+6. The agent starts on `http://localhost:8088/`
 
-See [Program.cs](Program.cs) for the full implementation. Work IQ tools are configured in toolbox that can be used by agent, so that it can answer questions to your Teams and calendar data.
+See [Program.cs](Program.cs) for the full implementation.
 
-### Agent Hosting
+## Environment Variables
 
-The agent is hosted using the [Agent Framework](https://github.com/microsoft/agent-framework) with `AgentHost.CreateBuilder()`, which provisions a REST API endpoint compatible with the OpenAI Responses protocol.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `FOUNDRY_PROJECT_ENDPOINT` | Yes | Azure AI Foundry project endpoint URL. Auto-injected when hosted — only needed locally |
+| `AZURE_AI_MODEL_DEPLOYMENT_NAME` | Yes | Model deployment name. Declared in `agent.yaml` and created from `agent.manifest.yaml` when using `azd provision` |
+| `TOOLBOX_NAME` | Yes | Foundry Toolbox name to load. Defaults to `teams-tools` in `.env.example` and `agent.manifest.yaml` |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` | No | Enables local telemetry when set. Auto-injected in hosted containers |
 
-## Running the Agent Host
+When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` and Application Insights settings are auto-injected by the platform. Authentication uses Managed Identity via `DefaultAzureCredential`. Locally, the sample loads a `.env` file via `DotNetEnv` if present.
 
-Follow the instructions in the [Running the Agent Host Locally](../README.md#running-the-agent-host-locally) section of the parent README to run the agent host.
+## Running Locally
 
-## Interacting with the agent
+### Prerequisites
 
-> Depending on how you run the agent host, you can invoke the agent using `curl` (`Invoke-WebRequest` in PowerShell) or `azd`. Please refer to the [parent README](../README.md) for more details. Use this README for sample queries you can send to the agent.
+- .NET 10.0 SDK or later (`dotnet --version`)
+- An Azure AI Foundry project with a model deployment and the `teams-tools` toolbox (or let `azd provision` create them)
+- Azure CLI authentication for manual local runs (`az login`)
+- Microsoft Teams and Microsoft 365 access for end-user sign-in after publishing
 
-Send a POST request to the server with a JSON body containing a "message" field to interact with the agent. For example:
+### Using `azd` (Recommended)
+
+Start the agent locally with the `run` command — `azd` restores dependencies, sets environment variables, builds, and starts the agent:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How many meetings do I have tomorrow?"}'
+azd ai agent run
 ```
 
-The server will respond with a JSON object containing the response text and a response ID. You can use this response ID to continue the conversation in subsequent requests.
+The agent starts on `http://localhost:8088/`.
 
-### Multi-turn conversation
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-To have a multi-turn conversation with the agent, include the previous response id in the request body. For example:
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+
+1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
+3. Restore dependencies:
+   ```bash
+   dotnet restore
+   ```
+4. Press **F5** to start the agent in debug mode. The agent starts on `http://localhost:8088/`.
+
+</details>
+<details>
+<summary><h3>Manual setup</h3></summary>
+
+Set the environment variables from [Environment Variables](#environment-variables) (or place them in a `.env` file, which the sample loads via `DotNetEnv`), then:
 
 ```bash
-curl -X POST http://localhost:8088/responses -H "Content-Type: application/json" -d '{"input": "How are you?", "previous_response_id": "REPLACE_WITH_PREVIOUS_RESPONSE_ID"}'
+dotnet run
 ```
+
+The agent starts on `http://localhost:8088/`.
+
+</details>
+
+## Invoke
+
+### Using azd
+
+**Local:**
+
+**Bash:**
+```bash
+azd ai agent invoke --local "How many meetings do I have tomorrow?"
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke --local "How many meetings do I have tomorrow?"
+```
+
+**Test with curl:**
+
+```bash
+curl -sS -X POST http://localhost:8088/responses \
+  -H "Content-Type: application/json" \
+  -d '{"input": "How many meetings do I have tomorrow?", "stream": false}' | jq .
+```
+
+<details>
+<summary><h3>Using Foundry Toolkit VS Code Extension</h3></summary>
+
+Open the **Agent Inspector** directly from the Foundry Toolkit extension to invoke the agent — no `curl` or CLI commands needed.
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Open Agent Inspector`.
+2. The Inspector auto-connects to your running agent at `http://localhost:8088/`.
+3. Type a message and send it. The Agent Inspector handles the protocol and displays the response inline.
+
+> Multi-turn conversation is supported — the Inspector maintains session context across messages.
+
+</details>
 
 ## Publishing the Agent
 
-1. In the Foundry portal, click **Publish**, then choose **Publish to Teams and Microsoft 365**. For the full flow, see this [documentation](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/publish-copilot).
-2. The Foundry portal creates the Azure Bot resource and configures the messaging endpoint automatically.
-3. End users need to sign in the first time they access the agent.
+After deployment, publish the agent to Teams and Microsoft 365 from the Foundry portal. Choose **Publish**, then **Publish to Teams and Microsoft 365**; the portal creates the Azure Bot resource and configures the messaging endpoint automatically. For the full flow, see [Publish a Foundry agent as a copilot](https://learn.microsoft.com/en-us/azure/foundry/agents/how-to/publish-copilot).
+
+End users sign in the first time they use the agent. Once signed in, they can send messages with file attachments and ask questions about Teams and calendar data through the Work IQ toolbox tools.
+
+![Using Work IQ tool](./teams-activity.png)
+
+## Deploying the Agent to Microsoft Foundry
+
+### Using azd
+
+Once you've tested locally, deploy to Microsoft Foundry:
+
+```bash
+# Provision Azure resources (skip if already done during local setup)
+azd provision
+
+# Build, push, and deploy the agent to Foundry
+azd deploy
+```
+
+After deploying, invoke the agent running in Foundry:
+
+**Bash:**
+```bash
+azd ai agent invoke "How many meetings do I have tomorrow?"
+```
+
+**PowerShell:**
+```powershell
+azd ai agent invoke "How many meetings do I have tomorrow?"
+```
+
+To stream logs from the running agent:
+
+```bash
+azd ai agent monitor
+```
+
+For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
+
+<details>
+<summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
+
+1. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Deploy Hosted Agent`. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
+2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
+3. On the **Basics** tab, configure the core deployment settings:
+   - **Deployment Method**: **Code** (upload as a ZIP) or **Container** (Docker image via ACR).
+   - For **Code**, pick a packaging option: **Remote** or **Local**.
+   - For **Container**, pick a registry option: default ACR, your own ACR, or a prebuilt ACR image.
+   - **Hosted Agent Name**: confirm the name to register with the hosting service.
+4. On the **Review + Deploy** tab, finalize the runtime and resources:
+   - Confirm the auto-detected runtime details (language, entry point, or Dockerfile).
+   - Pick a **CPU and Memory** size.
+   - Click **Deploy**. Fields are validated inline, and the extension handles the build/upload, agent version creation, and RBAC role assignment.
+5. After deployment, invoke the agent in the Agent Playground and stream live logs from the **Logs** tab.
+
+</details>
+
+## Troubleshooting
+
+### Images built on Apple Silicon or other ARM64 machines do not work on our service
+
+We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+
+If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
+
+**Fix for local builds:**
+
+```bash
+docker build --platform=linux/amd64 -t image .
+```
+
+This forces the image to be built for the required `amd64` architecture.
+
+### Teams or calendar data is unavailable
+
+Confirm the `teams-tools` toolbox and its Work IQ connections were created from `agent.manifest.yaml`, then have the end user sign in through Teams after publishing. Without sign-in, Teams and calendar tools cannot access user data.
