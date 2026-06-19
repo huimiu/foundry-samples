@@ -158,7 +158,7 @@ python main.py
 
 ### Deploying the Agent to Microsoft Foundry
 
-#### Deploying with the Azure Developer CLI (`azd`)
+#### Using the Azure Developer CLI (`azd`)
 
 Once you've tested locally, deploy to Microsoft Foundry:
 
@@ -184,7 +184,7 @@ azd ai agent monitor
 
 For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.ms/azdaiagent/docs).
 
-#### Deploying with the Foundry Toolkit VS Code Extension
+#### Using the Foundry Toolkit VS Code Extension
 
 1. Open the Command Palette (`Ctrl+Shift+P`) and run **Foundry Toolkit: Deploy Hosted Agent**. The extension opens a tab-based **Deploy Hosted Agent** wizard and reads `agent.yaml` to auto-populate what it can.
 2. If prompted, complete **Foundry Project Setup** to pick the subscription and Foundry project (or create a new one) to deploy to.
