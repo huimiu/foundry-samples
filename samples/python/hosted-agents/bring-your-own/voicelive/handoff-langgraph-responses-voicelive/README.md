@@ -65,6 +65,8 @@ azd ai agent invoke --local "I need a refund for order 12345"
 ```
 ### Deploying the Agent to Microsoft Foundry
 
+#### Deploying with the Azure Developer CLI (`azd`)
+
 Once you've tested locally, deploy to Microsoft Foundry:
 
 ```bash
