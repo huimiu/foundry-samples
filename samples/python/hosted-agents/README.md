@@ -98,7 +98,7 @@ Hosted agents run any code you can put in a container. These samples cover three
 
 ## Agent Framework samples
 
-The recommended path for building hosted agents. Agent Framework gives you native session management, built-in tool wiring, streaming, and the full Foundry feature set.
+Agent Framework gives you native session management, built-in tool wiring, streaming, and the full Foundry feature set.
 
 Samples are split by protocol. Start with **Responses** (the common path) — then explore **Invocations** when you need full HTTP control or long-running workflows.
 
@@ -163,7 +163,7 @@ See [`langgraph/README.md`](langgraph/) for the full list and the local-run guid
 
 ## Bring Your Own Framework samples
 
-Already built an agent with CrewAI or your own code? The protocol SDKs (`azure-ai-agentserver-responses` / `azure-ai-agentserver-invocations`) give you the hosted agent HTTP contract — they host the web server, expose the right endpoint, and handle request parsing — so you just plug in your agent logic. This is the recommended path for BYO to ensure your agent stays aligned with the platform contract as new endpoints are added. For lower-level control, the **Core adapter** (`azure-ai-agentserver-core`) gives you managed hosting, OpenTelemetry tracing, and health endpoints, but you handle the protocol details yourself.
+Already built an agent with CrewAI or your own code? The protocol SDKs (`azure-ai-agentserver-responses` / `azure-ai-agentserver-invocations`) give you the hosted agent HTTP contract — they host the web server, expose the right endpoint, and handle request parsing — so you just plug in your agent logic. This keeps your agent aligned with the platform contract as new endpoints are added. For lower-level control, the **Core adapter** (`azure-ai-agentserver-core`) gives you managed hosting, OpenTelemetry tracing, and health endpoints, but you handle the protocol details yourself.
 
 > **Note:** If you're using AutoGen or Semantic Kernel, you don't need BYO — Agent Framework supports them natively. See the [Agent Framework samples](#agent-framework-samples) instead.
 
@@ -222,7 +222,7 @@ azd down
 
 ### Using the Foundry Toolkit VS Code Extension
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open any sample directly from the extension without cloning this repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
 
 Or, if you've already cloned this repository:
 

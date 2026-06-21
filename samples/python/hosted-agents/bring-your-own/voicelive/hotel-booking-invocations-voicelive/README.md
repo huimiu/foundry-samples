@@ -36,7 +36,7 @@ Depending on session state, the agent emits:
 
 Before running this sample, ensure you have:
 
-1. **Azure Developer CLI (`azd`)** (recommended)
+1. **Azure Developer CLI (`azd`)**
 	 - [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) and the AI agent extension: `azd ext install azure.ai.agents`
 	 - Authenticated: `azd auth login`
 2. **Python 3.10 or later**
@@ -76,7 +76,7 @@ curl -sS -N -X POST "http://localhost:8088/invocations" \
 
 Use the same `agent_session_id` across turns to keep conversation and booking state.
 
-## Using `azd` (recommended)
+## Using `azd`
 
 No cloning required. Create a new folder, initialize from the manifest, then provision and run:
 
@@ -126,7 +126,7 @@ For full deployment guidance, see [Azure AI Foundry hosted agents](https://aka.m
 
 ### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
-We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+**Deploy with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
 
 If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 

@@ -39,7 +39,7 @@ curl -sS -N -X POST http://localhost:8088/responses \
     -d '{"input": "I need a refund for order 12345", "stream": true}'
 ```
 
-## Using [`azd`](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd) (recommended for CLI workflows)
+## Using [`azd`](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=azd)
 
 No cloning required. Create a new folder, point azd at the manifest on GitHub, and it sets up the sample and generates Bicep infrastructure, agent.yaml, and env config automatically:
 
@@ -95,7 +95,7 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
 
 ### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
-We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+**Deploy with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
 
 If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 

@@ -32,7 +32,7 @@ When deployed as a hosted agent, `FOUNDRY_PROJECT_ENDPOINT` and Application Insi
 - An Azure AI Foundry project with a model deployment and a Foundry Toolbox (or let `azd provision` create them)
 - Azure CLI authentication for manual local runs (`az login`)
 
-### Using `azd` (Recommended)
+### Using `azd`
 
 Start the agent locally with the `run` command — `azd` restores dependencies, sets environment variables, builds, and starts the agent:
 
@@ -45,9 +45,9 @@ The agent starts on `http://localhost:8088/`.
 <details>
 <summary><h3>Using the Foundry Toolkit VS Code Extension</h3></summary>
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery that scaffolds this project directly into a new workspace — no manual cloning needed.
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) sets up a one-click **F5** debug experience for this sample.
 
-1. It's recommended to scaffold the project using the Foundry Toolkit extension. Open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
+1. Scaffold the project using the Foundry Toolkit extension: open the Command Palette (`Ctrl+Shift+P`) and run `Foundry Toolkit: Create new Hosted Agent`. The extension automatically creates the VS Code debug configuration files and `.env`.
 2. Edit `.env` and fill in the required environment variables (see [Environment Variables](#environment-variables) above for the full list).
 3. Restore dependencies:
    ```bash
@@ -168,7 +168,7 @@ For the full deployment guide, see [Azure AI Foundry hosted agents](https://aka.
 
 ### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
-We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+**Deploy with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
 
 If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 

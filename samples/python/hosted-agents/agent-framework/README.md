@@ -135,7 +135,7 @@ Or in PowerShell:
 
 ### Using the Foundry Toolkit VS Code Extension
 
-The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) has a built-in sample gallery. You can open this sample directly from the extension without cloning the repository, it scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
+The [Foundry Toolkit VS Code extension](https://learn.microsoft.com/en-us/azure/foundry/agents/quickstarts/quickstart-hosted-agent?view=foundry&pivots=vscode) scaffolds the project into a new workspace, generates `agent.yaml`, `.env`, and `.vscode/tasks.json` + `launch.json` automatically, and configures a one-click **F5** debug experience.
 
 The extension also adds an **Agent Inspector** UI for chatting with a hosted agent that is already running locally, plus a guided **Deploy Hosted Agent** command (see [Deploying the Agent to Foundry](#deploying-the-agent-to-foundry) below).
 

@@ -167,7 +167,7 @@ You can also type into the text bar — the proxy forwards `send-text` RTVI fram
 
 ## Deploying the Agent to Microsoft Foundry
 
-The recommended path is `azd`, which uses ACR remote build (so Apple Silicon machines work) and registers the hosted agent in Foundry in one step.
+Use `azd`, which uses ACR remote build (so Apple Silicon machines work) and registers the hosted agent in Foundry in one step.
 
 ### 1. Initialise an azd workspace
 
@@ -277,7 +277,7 @@ azd ai agent monitor pipecat-ws-server --session-id <session-id> --follow
 
 ### Images built on Apple Silicon or other ARM64 machines do not work on our service
 
-We **recommend deploying with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
+**Deploy with `azd deploy`**, which uses ACR remote build and always produces images with the correct architecture.
 
 If you choose to **build locally**, and your machine is **not `linux/amd64`** (for example, an Apple Silicon Mac), the image will **not be compatible with our service**, causing runtime failures.
 

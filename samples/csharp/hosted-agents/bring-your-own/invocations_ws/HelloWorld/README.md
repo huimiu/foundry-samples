@@ -64,7 +64,7 @@ shuttle audio bytes and control events.
 1. **.NET 10.0 SDK or later**
    - Verify your version: `dotnet --version`
    - Download from [https://dotnet.microsoft.com/download](https://dotnet.microsoft.com/download)
-2. **Azure Developer CLI (`azd`)** (recommended for deploy)
+2. **Azure Developer CLI (`azd`)**
    - [Install azd](https://learn.microsoft.com/en-us/azure/developer/azure-developer-cli/install-azd) and the AI agent extension: `azd ext install azure.ai.agents`
    - Authenticated: `azd auth login`
 3. **Azure CLI** — installed and authenticated: `az login`.
